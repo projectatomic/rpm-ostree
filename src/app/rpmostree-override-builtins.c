@@ -85,7 +85,10 @@ handle_override (RPMOSTreeSysroot  *sysroot_proxy,
   g_variant_dict_insert (&dict, "initiating-command-line", "s", invocation->command_line);
   g_autoptr(GVariant) options = g_variant_ref_sink (g_variant_dict_end (&dict));
 
-  g_autoptr(GVariant) previous_deployment = rpmostree_os_dup_default_deployment (os_proxy);
+  g_autoptr(RpmOstreeDeployment) starting_default_deployment =
+    rpmostree_get_default_deployment (sysroot_proxy, cancellable, error);
+  if (!starting_default_deployment)
+    return FALSE;
 
   g_autofree char *transaction_address = NULL;
   if (!rpmostree_update_deployment (os_proxy,
@@ -115,16 +118,13 @@ handle_override (RPMOSTreeSysroot  *sysroot_proxy,
     }
   else if (!opt_reboot)
     {
-      /* only print diff if a new deployment was laid down (e.g. reset --all may not) */
-      if (!rpmostree_has_new_default_deployment (os_proxy, previous_deployment))
-        return TRUE;
-
-      const char *sysroot_path = rpmostree_sysroot_get_path (sysroot_proxy);
-      if (!rpmostree_print_treepkg_diff_from_sysroot_path (sysroot_path,
-            RPMOSTREE_DIFF_PRINT_FORMAT_FULL_MULTILINE, 0, cancellable, error))
+      gboolean changed;
+      if (!rpmostree_print_diff_from_deployment (starting_default_deployment, &changed,
+                                                 cancellable, error))
         return FALSE;
 
-      g_print ("Run \"systemctl reboot\" to start a reboot\n");
+      if (changed)
+        g_print ("Run \"systemctl reboot\" to start a reboot\n");
     }
 
   return TRUE;

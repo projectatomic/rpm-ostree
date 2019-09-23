@@ -820,14 +820,14 @@ out:
  */
 gboolean
 rpmostree_transaction_client_run (RpmOstreeCommandInvocation *invocation,
-                                  RPMOSTreeSysroot *sysroot_proxy,
-                                  RPMOSTreeOS      *os_proxy,
-                                  GVariant         *options,
-                                  gboolean          exit_unchanged_77,
-                                  const char       *transaction_address,
-                                  GVariant         *previous_deployment,
-                                  GCancellable     *cancellable,
-                                  GError          **error)
+                                  RPMOSTreeSysroot    *sysroot_proxy,
+                                  RPMOSTreeOS         *os_proxy,
+                                  GVariant            *options,
+                                  gboolean             exit_unchanged_77,
+                                  const char          *transaction_address,
+                                  RpmOstreeDeployment *previous_deployment,
+                                  GCancellable        *cancellable,
+                                  GError             **error)
 {
   /* Wait for the txn to complete */
   if (!rpmostree_transaction_get_response_sync (sysroot_proxy, transaction_address,
@@ -849,22 +849,18 @@ rpmostree_transaction_client_run (RpmOstreeCommandInvocation *invocation,
     }
   else if (!opt_reboot)
     {
-      if (!rpmostree_has_new_default_deployment (os_proxy, previous_deployment))
+      gboolean changed;
+      if (!rpmostree_print_diff_from_deployment (previous_deployment, &changed,
+                                                 cancellable, error))
+        return FALSE;
+
+      if (!changed)
         {
           if (exit_unchanged_77)
             invocation->exit_code = RPM_OSTREE_EXIT_UNCHANGED;
-          return TRUE;
         }
       else
-        {
-          /* do diff without dbus: https://github.com/projectatomic/rpm-ostree/pull/116 */
-          const char *sysroot_path = rpmostree_sysroot_get_path (sysroot_proxy);
-          if (!rpmostree_print_treepkg_diff_from_sysroot_path (sysroot_path,
-                RPMOSTREE_DIFF_PRINT_FORMAT_FULL_MULTILINE, 0, cancellable, error))
-            return FALSE;
-        }
-
-      g_print ("Run \"systemctl reboot\" to start a reboot\n");
+        g_print ("Run \"systemctl reboot\" to start a reboot\n");
     }
 
   return TRUE;

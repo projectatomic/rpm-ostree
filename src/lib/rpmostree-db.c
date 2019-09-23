@@ -24,6 +24,7 @@
 
 #include "rpmostree-db.h"
 #include "rpmostree-rpm-util.h"
+#include "rpmostree-private.h"
 #include "rpmostree-package-priv.h"
 #include "rpmostree-refsack.h"
 
@@ -165,6 +166,6 @@ rpm_ostree_db_diff_ext (OstreeRepo               *repo,
       return TRUE;
     }
 
-  return _rpm_ostree_diff_package_lists (orig_pkglist, new_pkglist, out_removed, out_added,
+  return _rpm_ostree_package_diff_lists (orig_pkglist, new_pkglist, out_removed, out_added,
                                          out_modified_old, out_modified_new, NULL);
 }

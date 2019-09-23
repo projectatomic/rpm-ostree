@@ -59,9 +59,23 @@ rpmostree_usage_error (GOptionContext  *context,
                        const char      *message,
                        GError         **error);
 
+typedef struct RpmOstreeDeployment RpmOstreeDeployment;
+
+RpmOstreeDeployment*
+rpmostree_get_default_deployment (RPMOSTreeSysroot *sysroot_proxy,
+                                  GCancellable  *cancellable,
+                                  GError       **error);
+
+void
+rpmostree_deployment_free (RpmOstreeDeployment *deployment);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (RpmOstreeDeployment, rpmostree_deployment_free);
+
 gboolean
-rpmostree_has_new_default_deployment (RPMOSTreeOS *os_proxy,
-                                      GVariant    *previous_deployment);
+rpmostree_print_diff_from_deployment (RpmOstreeDeployment *deployment,
+                                      gboolean      *out_changed,
+                                      GCancellable  *cancellable,
+                                      GError       **error);
 
 gboolean
 rpmostree_print_treepkg_diff_from_sysroot_path (const gchar   *sysroot_path,

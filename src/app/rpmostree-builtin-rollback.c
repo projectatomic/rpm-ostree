@@ -76,7 +76,11 @@ rpmostree_builtin_rollback (int             argc,
                                 cancellable, &os_proxy, error))
     return FALSE;
 
-  g_autoptr(GVariant) previous_deployment = rpmostree_os_dup_default_deployment (os_proxy);
+  g_autoptr(RpmOstreeDeployment) starting_default_deployment =
+    rpmostree_get_default_deployment (sysroot_proxy, cancellable, error);
+  if (!starting_default_deployment)
+    return FALSE;
+
   /* really, rollback only supports the "reboot" option; all others are ignored */
   GVariantDict dict;
   g_variant_dict_init (&dict, NULL);
@@ -93,6 +97,6 @@ rpmostree_builtin_rollback (int             argc,
   return rpmostree_transaction_client_run (invocation, sysroot_proxy, os_proxy,
                                            options, FALSE,
                                            transaction_address,
-                                           previous_deployment,
+                                           starting_default_deployment,
                                            cancellable, error);
 }

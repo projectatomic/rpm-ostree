@@ -160,7 +160,10 @@ rpmostree_builtin_rebase (int             argc,
         }
     }
 
-  g_autoptr(GVariant) previous_deployment = rpmostree_os_dup_default_deployment (os_proxy);
+  g_autoptr(RpmOstreeDeployment) starting_default_deployment =
+    rpmostree_get_default_deployment (sysroot_proxy, cancellable, error);
+  if (!starting_default_deployment)
+    return FALSE;
 
   GVariantDict dict;
   g_variant_dict_init (&dict, NULL);
@@ -225,6 +228,6 @@ rpmostree_builtin_rebase (int             argc,
   return rpmostree_transaction_client_run (invocation, sysroot_proxy, os_proxy,
                                            options, FALSE,
                                            transaction_address,
-                                           previous_deployment,
+                                           starting_default_deployment,
                                            cancellable, error);
 }

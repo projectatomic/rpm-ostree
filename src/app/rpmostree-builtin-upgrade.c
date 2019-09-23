@@ -126,7 +126,10 @@ rpmostree_builtin_upgrade (int             argc,
         g_print ("note: automatic updates (%s) are enabled\n", policy);
     }
 
-  g_autoptr(GVariant) previous_deployment = rpmostree_os_dup_default_deployment (os_proxy);
+  g_autoptr(RpmOstreeDeployment) starting_default_deployment =
+    rpmostree_get_default_deployment (sysroot_proxy, cancellable, error);
+  if (!starting_default_deployment)
+    return FALSE;
 
   const gboolean check_or_preview = (opt_check || opt_preview);
   if (opt_automatic || check_or_preview)
@@ -227,20 +230,18 @@ rpmostree_builtin_upgrade (int             argc,
     }
   else if (!opt_reboot)
     {
-      if (!rpmostree_has_new_default_deployment (os_proxy, previous_deployment))
+      gboolean changed;
+      if (!rpmostree_print_diff_from_deployment (starting_default_deployment, &changed,
+                                                 cancellable, error))
+        return FALSE;
+
+      if (!changed)
         {
           if (opt_upgrade_unchanged_exit_77)
             invocation->exit_code = RPM_OSTREE_EXIT_UNCHANGED;
-          return TRUE;
         }
-
-      /* do diff without dbus: https://github.com/projectatomic/rpm-ostree/pull/116 */
-      const char *sysroot_path = rpmostree_sysroot_get_path (sysroot_proxy);
-      if (!rpmostree_print_treepkg_diff_from_sysroot_path (sysroot_path,
-            RPMOSTREE_DIFF_PRINT_FORMAT_FULL_MULTILINE, 0, cancellable, error))
-        return FALSE;
-
-      g_print ("Run \"systemctl reboot\" to start a reboot\n");
+      else
+        g_print ("Run \"systemctl reboot\" to start a reboot\n");
     }
 
   return TRUE;

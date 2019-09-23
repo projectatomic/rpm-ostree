@@ -24,6 +24,7 @@
 
 #include "rpm-ostreed-generated.h"
 #include "rpmostree-builtin-types.h"
+#include "rpmostree-libbuiltin.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -80,7 +81,7 @@ rpmostree_transaction_client_run             (RpmOstreeCommandInvocation *invoca
                                               GVariant         *options,
                                               gboolean          exit_unchanged_77,
                                               const char *transaction_address,
-                                              GVariant         *previous_deployment,
+                                              RpmOstreeDeployment *previous_deployment,
                                               GCancellable *cancellable,
                                               GError **error);
 

@@ -25,6 +25,7 @@
 #include "rpmostree-libbuiltin.h"
 #include "rpmostree.h"
 #include "rpmostree-util.h"
+#include "rpmostree-private.h"
 
 #include "libglnx.h"
 
@@ -59,31 +60,106 @@ rpmostree_usage_error (GOptionContext  *context,
   (void) glnx_throw (error, "usage error: %s", message);
 }
 
-static const char*
-get_id_from_deployment_variant (GVariant *deployment)
+/* This is just a simple struct to avoid reloading the sysroot multiple times in client
+ * code, as well as to remember the previous default pkglist before it gets GC'ed in order
+ * to only print differences: https://github.com/projectatomic/rpm-ostree/issues/945 */
+struct RpmOstreeDeployment
 {
-  g_autoptr(GVariantDict) dict = g_variant_dict_new (deployment);
-  const char *id;
-  g_assert (g_variant_dict_lookup (dict, "id", "&s", &id));
-  return id;
+  OstreeSysroot    *sysroot;
+  OstreeRepo       *repo;
+  OstreeDeployment *deployment;
+  GPtrArray        *pkglist;
+};
+
+RpmOstreeDeployment*
+rpmostree_get_default_deployment (RPMOSTreeSysroot *sysroot_proxy,
+                                  GCancellable  *cancellable,
+                                  GError       **error)
+{
+  const char *sysroot_path = rpmostree_sysroot_get_path (sysroot_proxy);
+
+  g_autoptr(GFile) sysroot_file = g_file_new_for_path (sysroot_path);
+  g_autoptr(OstreeSysroot) sysroot = ostree_sysroot_new (sysroot_file);
+  if (!ostree_sysroot_load (sysroot, cancellable, error))
+    return NULL;
+
+  g_autoptr(OstreeRepo) repo = NULL;
+  if (!ostree_sysroot_get_repo (sysroot, &repo, cancellable, error))
+    return NULL;
+
+  g_autoptr(GPtrArray) deployments = ostree_sysroot_get_deployments (sysroot);
+  g_assert_cmpuint (deployments->len, >, 0);
+  g_autoptr(OstreeDeployment) default_deployment = g_object_ref (deployments->pdata[0]);
+
+  const char *csum = ostree_deployment_get_csum (default_deployment);
+  g_autoptr(GPtrArray) pkglist = rpm_ostree_db_query_all (repo, csum, cancellable, error);
+  if (!pkglist)
+    return NULL;
+
+  RpmOstreeDeployment *deployment = g_new (RpmOstreeDeployment, 1);
+  deployment->sysroot = g_steal_pointer (&sysroot);
+  deployment->repo = g_steal_pointer (&repo);
+  deployment->deployment = g_steal_pointer (&default_deployment);
+  deployment->pkglist = g_steal_pointer (&pkglist);
+  return deployment;
+}
+
+void
+rpmostree_deployment_free (RpmOstreeDeployment *deployment)
+{
+  g_clear_pointer (&deployment->pkglist, g_ptr_array_unref);
+  g_clear_pointer (&deployment->deployment, g_object_unref);
+  g_clear_pointer (&deployment->repo, g_object_unref);
+  g_clear_pointer (&deployment->sysroot, g_object_unref);
+  g_free (deployment);
 }
 
 gboolean
-rpmostree_has_new_default_deployment (RPMOSTreeOS *os_proxy,
-                                      GVariant    *previous_deployment)
+rpmostree_print_diff_from_deployment (RpmOstreeDeployment *deployment,
+                                      gboolean      *out_changed,
+                                      GCancellable  *cancellable,
+                                      GError       **error)
 {
-  g_autoptr(GVariant) new_deployment = rpmostree_os_dup_default_deployment (os_proxy);
-
-  /* trivial case */
-  if (g_variant_equal (previous_deployment, new_deployment))
+  /* just reload the sysroot to make sure it's updated */
+  if (!ostree_sysroot_load_if_changed (deployment->sysroot, out_changed,
+                                       cancellable, error))
     return FALSE;
 
-  const char *previous_id = get_id_from_deployment_variant (previous_deployment);
-  const char *new_id = get_id_from_deployment_variant (new_deployment);
-  return !g_str_equal (previous_id, new_id);
+  if (!*out_changed)
+    return TRUE;
+
+  g_autoptr(GPtrArray) deployments = ostree_sysroot_get_deployments (deployment->sysroot);
+  g_assert_cmpuint (deployments->len, >, 1);
+
+  OstreeDeployment *new_deployment = deployments->pdata[0];
+  OstreeDeployment *booted_deployment =
+    ostree_sysroot_get_booted_deployment (deployment->sysroot);
+
+  if (!booted_deployment || ostree_deployment_equal (booted_deployment, new_deployment))
+    return TRUE; /* e.g. `cleanup -p` or `rollback` */
+
+  if (ostree_deployment_equal (deployment->deployment, new_deployment))
+    return TRUE; /* no change in default deployment */
+
+  const char *csum = ostree_deployment_get_csum (new_deployment);
+  g_autoptr(GPtrArray) pkglist = rpm_ostree_db_query_all (deployment->repo, csum,
+                                                          cancellable, error);
+  if (!pkglist)
+    return FALSE;
+
+  g_autoptr(GPtrArray) removed = NULL;
+  g_autoptr(GPtrArray) added = NULL;
+  g_autoptr(GPtrArray) modified_old = NULL;
+  g_autoptr(GPtrArray) modified_new = NULL;
+
+  /* need API here to print diff between old pkglist and new pkglist */
+  g_assert (_rpm_ostree_package_diff_lists (deployment->pkglist, pkglist, &removed, &added,
+                                            &modified_old, &modified_new, NULL));
+  rpmostree_diff_print_formatted (RPMOSTREE_DIFF_PRINT_FORMAT_FULL_MULTILINE, 0,
+                                  removed, added, modified_old, modified_new);
+  return TRUE;
 }
 
-/* Print the diff between the booted and pending deployments */
 gboolean
 rpmostree_print_treepkg_diff_from_sysroot_path (const gchar   *sysroot_path,
                                                 RpmOstreeDiffPrintFormat format,

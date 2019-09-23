@@ -28,6 +28,7 @@ librpmostree_1_la_SOURCES = \
 	src/lib/rpmostree.c \
 	src/lib/rpmostree-db.c \
 	src/lib/rpmostree-package.c \
+	src/lib/rpmostree-private.h \
 	$(NULL)
 
 librpmostree_1_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/libglnx -I$(srcdir)/src/libpriv -I$(srcdir)/src/lib \

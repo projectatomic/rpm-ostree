@@ -30,6 +30,7 @@
 
 #include "config.h"
 
+#include "rpmostree-private.h"
 #include "rpmostree-package-priv.h"
 #include "rpmostree-rpm-util.h"
 
@@ -313,7 +314,7 @@ next_pkg_has_different_name (const char *name, GPtrArray *pkgs, guint cur_i)
  * multilib) are counted as different packages.
  * */
 gboolean
-_rpm_ostree_diff_package_lists (GPtrArray  *a,
+_rpm_ostree_package_diff_lists (GPtrArray  *a,
                                 GPtrArray  *b,
                                 GPtrArray **out_unique_a,
                                 GPtrArray **out_unique_b,
