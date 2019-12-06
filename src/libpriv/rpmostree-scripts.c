@@ -21,11 +21,14 @@
 #include "config.h"
 
 #include <gio/gio.h>
+#include <glib-unix.h>
 #include <systemd/sd-journal.h>
 #include "rpmostree-output.h"
 #include "rpmostree-util.h"
+#include "rpmostree-rust.h"
 #include "rpmostree-bwrap.h"
 #include <err.h>
+#include <fcntl.h>
 #include <systemd/sd-journal.h>
 #include "libglnx.h"
 
@@ -256,6 +259,7 @@ struct ChildSetupData {
   int stdin_fd;
   int stdout_fd;
   int stderr_fd;
+  int useradd_fd;
 };
 
 static void
@@ -273,6 +277,8 @@ script_child_setup (gpointer opaque)
     err (1, "dup2(stdout)");
   if (data->stderr_fd >= 0 && dup2 (data->stderr_fd, STDERR_FILENO) < 0)
     err (1, "dup2(stderr)");
+  if (data->useradd_fd >= 0 && fcntl (data->useradd_fd, F_SETFD, 0) < 0)
+    err (1, "fcntl(useradd_fd)");
 }
 
 /* Print the output of a script, with each line prefixed with
@@ -348,11 +354,13 @@ run_script_in_bwrap_container (int rootfs_fd,
   const char *postscript_path_container = glnx_strjoina ("/usr", postscript_name);
   const char *postscript_path_host = postscript_path_container + 1;
   g_autoptr(RpmOstreeBwrap) bwrap = NULL;
+  g_auto(GLnxTmpfile) useradd_tmpf = {0, };
   gboolean created_var_lib_rpmstate = FALSE;
   gboolean created_run_ostree_booted = FALSE;
   glnx_autofd int stdout_fd = -1;
   glnx_autofd int stderr_fd = -1;
   struct stat stbuf;
+  glnx_autofd int useradd_pipe_fd = -1;
 
   /* TODO - Create a pipe and send this to bwrap so it's inside the
    * tmpfs.  Note the +1 on the path to skip the leading /.
@@ -442,7 +450,8 @@ run_script_in_bwrap_container (int rootfs_fd,
     {
       struct ChildSetupData data = { .stdin_fd = stdin_fd,
                                      .stdout_fd = -1,
-                                     .stderr_fd = -1, };
+                                     .stderr_fd = -1,
+                                     .useradd_fd = -1 };
 
       /* Only try to log to the journal if we're already set up that way (normally
        * rpm-ostreed for host system management). Otherwise we might be in a Docker
@@ -473,6 +482,16 @@ run_script_in_bwrap_container (int rootfs_fd,
             return FALSE;
           data.stdout_fd = data.stderr_fd = buffered_output.fd;
         }
+
+      /* Special API to pass useradd/groupadd invocations back up to the parent
+       * outside the root.
+       */
+      if (!glnx_open_anonymous_tmpfile (O_RDWR | O_CLOEXEC, &useradd_tmpf, error))
+        return FALSE;
+      data.useradd_fd = useradd_tmpf.fd;
+      { g_autofree char *useradd_env = g_strdup_printf ("%d", data.useradd_fd);
+        rpmostree_bwrap_setenv (bwrap, "RPMOSTREE_USERADD_FD", useradd_env);
+      }
 
       data.all_fds_initialized = TRUE;
       rpmostree_bwrap_set_child_setup (bwrap, script_child_setup, &data);
@@ -511,6 +530,14 @@ run_script_in_bwrap_container (int rootfs_fd,
     }
   else
     dump_buffered_output_noerr (pkg_script, &buffered_output);
+
+  {
+    // Transfer ownership
+    int fd = useradd_tmpf.fd;
+    useradd_tmpf.initialized = FALSE;
+    if (!ror_sysusers_process_useradd_invocations (rootfs_fd, fd, error))
+      return FALSE;
+  }
 
   ret = TRUE;
  out:

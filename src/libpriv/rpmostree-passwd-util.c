@@ -680,6 +680,7 @@ rpmostree_check_passwd_groups (gboolean         passwd,
 
 /* See "man 5 passwd" We just make sure the name and uid/gid match,
    and that none are missing. don't care about GECOS/dir/shell.
+   If sysusers is enabled, this delegates to that.
 */
 gboolean
 rpmostree_check_passwd (OstreeRepo      *repo,
@@ -690,9 +691,16 @@ rpmostree_check_passwd (OstreeRepo      *repo,
                         GCancellable    *cancellable,
                         GError         **error)
 {
-  return rpmostree_check_passwd_groups (TRUE, repo, rootfs_fd, treefile_rs,
-                                        treedata, previous_commit,
-                                        cancellable, error);
+  if (ror_treefile_get_sysusers (treefile_rs))
+    {
+      return ror_sysusers_final_postprocess (rootfs_fd, error);
+    }
+  else
+    {
+      return rpmostree_check_passwd_groups (TRUE, repo, rootfs_fd, treefile_rs,
+                                            treedata, previous_commit,
+                                            cancellable, error);
+    }
 }
 
 /* See "man 5 group" We just need to make sure the name and gid match,
@@ -1077,6 +1085,7 @@ rpmostree_passwd_compose_prep (int              rootfs_dfd,
                                GCancellable    *cancellable,
                                GError         **error)
 {
+  GLNX_AUTO_PREFIX_ERROR ("Preparing passwd/group", error);
   gboolean generate_from_previous = TRUE;
   if (!_rpmostree_jsonutil_object_get_optional_boolean_member (treedata, "preserve-passwd",
                                                                &generate_from_previous, error))
@@ -1343,13 +1352,22 @@ rpmostree_passwddb_open (int rootfs, GCancellable *cancellable, GError **error)
 
   if (!add_passwd_to_hash (rootfs, "usr/etc/passwd", ret->users, error))
     return NULL;
-  if (!add_passwd_to_hash (rootfs, "usr/lib/passwd", ret->users, error))
-    return NULL;
+  if (!glnx_fstatat_allow_noent (rootfs, "usr/lib/passwd", NULL, 0, error))
+    return FALSE;
+  const gboolean have_usrlib_passwd = (errno == 0);
+  if (have_usrlib_passwd)
+    {
+      if (!add_passwd_to_hash (rootfs, "usr/lib/passwd", ret->users, error))
+        return NULL;
+    }
 
   if (!add_groups_to_hash (rootfs, "usr/etc/group", ret->groups, error))
     return NULL;
-  if (!add_groups_to_hash (rootfs, "usr/lib/group", ret->groups, error))
-    return NULL;
+  if (have_usrlib_passwd)
+    {
+      if (!add_groups_to_hash (rootfs, "usr/lib/group", ret->groups, error))
+        return NULL;
+    }
 
   return g_steal_pointer (&ret);
 }

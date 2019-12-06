@@ -2,5 +2,8 @@
 <gresources>
   <gresource prefix="/rpmostree">
     <file>systemctl-wrapper.sh</file>
+    <file>useradd-wrapper.sh</file>
+    <file>groupadd-wrapper.sh</file>
+    <file>systemd-sysusers-wrapper.sh</file>
   </gresource>
 </gresources>

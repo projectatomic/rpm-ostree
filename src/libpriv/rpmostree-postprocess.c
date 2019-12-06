@@ -283,6 +283,19 @@ rpmostree_postprocess_run_depmod (int           rootfs_dfd,
   return TRUE;
 }
 
+/* Run after %pre scripts to ensure that /etc/{passwd,group} are populated. */
+gboolean
+rpmostree_postprocess_run_sysusers (int           rootfs_dfd,
+                                    gboolean      unified_core_mode,
+                                    GCancellable *cancellable,
+                                    GError      **error)
+{
+  char *child_argv[] = { "systemd-sysusers", NULL };
+  if (!run_bwrap_mutably (rootfs_dfd, "systemd-sysusers.rpmostreesave", child_argv, unified_core_mode, cancellable, error))
+    return FALSE;
+  return TRUE;
+}
+
 /* Handle the kernel/initramfs, which can be in at least 2 different places:
  *  - /boot (CentOS, Fedora treecompose before we suppressed kernel.spec's %posttrans)
  *  - /usr/lib/modules (Fedora treecompose without kernel.spec's %posttrans)
@@ -1005,27 +1018,32 @@ rpmostree_postprocess_final (int            rootfs_dfd,
                                                                error))
     return FALSE;
 
-  g_print ("Migrating /usr/etc/passwd to /usr/lib/\n");
-  if (!rpmostree_passwd_migrate_except_root (rootfs_dfd, RPM_OSTREE_PASSWD_MIGRATE_PASSWD, NULL,
-                                             cancellable, error))
-    return FALSE;
+  const gboolean sysusers = ror_treefile_get_sysusers (treefile_rs);
 
-  g_autoptr(GHashTable) preserve_groups_set = NULL;
-  if (treefile && json_object_has_member (treefile, "etc-group-members"))
+  if (!sysusers)
     {
-      JsonArray *etc_group_members = json_object_get_array_member (treefile, "etc-group-members");
-      preserve_groups_set = _rpmostree_jsonutil_jsarray_strings_to_set (etc_group_members);
+      g_print ("Migrating /usr/etc/passwd to /usr/lib/\n");
+      if (!rpmostree_passwd_migrate_except_root (rootfs_dfd, RPM_OSTREE_PASSWD_MIGRATE_PASSWD, NULL,
+                                                 cancellable, error))
+        return FALSE;
+
+      g_autoptr(GHashTable) preserve_groups_set = NULL;
+      if (treefile && json_object_has_member (treefile, "etc-group-members"))
+        {
+          JsonArray *etc_group_members = json_object_get_array_member (treefile, "etc-group-members");
+          preserve_groups_set = _rpmostree_jsonutil_jsarray_strings_to_set (etc_group_members);
+        }
+
+      g_print ("Migrating /usr/etc/group to /usr/lib/\n");
+      if (!rpmostree_passwd_migrate_except_root (rootfs_dfd, RPM_OSTREE_PASSWD_MIGRATE_GROUP,
+                                                 preserve_groups_set,
+                                                 cancellable, error))
+        return FALSE;
+
+      /* NSS configuration to look at the new files */
+      if (!replace_nsswitch (rootfs_dfd, cancellable, error))
+        return glnx_prefix_error (error, "nsswitch replacement");
     }
-
-  g_print ("Migrating /usr/etc/group to /usr/lib/\n");
-  if (!rpmostree_passwd_migrate_except_root (rootfs_dfd, RPM_OSTREE_PASSWD_MIGRATE_GROUP,
-                                             preserve_groups_set,
-                                             cancellable, error))
-    return FALSE;
-
-  /* NSS configuration to look at the new files */
-  if (!replace_nsswitch (rootfs_dfd, cancellable, error))
-    return glnx_prefix_error (error, "nsswitch replacement");
 
   if (selinux)
     {

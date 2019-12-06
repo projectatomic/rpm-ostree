@@ -285,3 +285,14 @@ version of `rpm-ostree`.
 
  * `rojig`: Object, optional.  Sub-keys are `name`, `summary`, `license`,
    and `description`.  Of those, `name` and `license` are mandatory.
+
+ * `sysusers`: boolean, optional: Defaults to `false`. Enable generation of
+   systemd sysusers.d entries based on `useradd`/`gruopadd` invocations.  If enabled,
+   this overrides `preserve-passwd`.  It also obsoletes `check-passwd`.
+ 
+ * `sysusers-users`: List of `string` -> `number` mappings.  When sysusers is
+   enabled, it is required that any non-root-owned files that are in `/usr`
+   (and hence shipped with the ostree commit) have static mappings.  Otherwise,
+   the values could change across builds.
+
+ * `sysusers-groups`: Same as `sysusers-users` but for groups.

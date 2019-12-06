@@ -275,6 +275,8 @@ rpmostree_composeutil_get_treespec (RpmOstreeContext  *ctx,
        * to the final one right before commit as usual. */
       g_key_file_set_boolean (treespec, "tree", "selinux", FALSE);
     }
+  if (ror_treefile_get_sysusers (treefile_rs))
+    g_key_file_set_boolean (treespec, "tree", "sysusers", TRUE);
 
   const char *input_ref = NULL;
   if (!_rpmostree_jsonutil_object_get_optional_string_member (treedata, "ref", &input_ref, error))

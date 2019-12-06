@@ -66,13 +66,14 @@ composejson=$(pwd)/compose.json
 compose_workdir=${test_tmpdir}/workdir
 compose_base_argv="--workdir ${compose_workdir} --repo ${repobuild} --write-composejson-to ${composejson}"
 runcompose() {
+    set -euo pipefail
     echo "$(date): starting compose"
     # The workdir will be cleaned up (or not) with the overall test dir
     rm ${compose_workdir} -rf
     mkdir ${test_tmpdir}/workdir
-    env RPMOSTREE_PRESERVE_TMPDIR=1 rpm-ostree compose tree ${compose_base_argv} ${treefile} "$@"
-    commit=$(jq -r '.["ostree-commit"]' < "${composejson}")
-    ostree --repo=${repo} pull-local ${repobuild} "${treeref:-${commit}}"
+    env RPMOSTREE_PRESERVE_TMPDIR=1 rpm-ostree compose tree ${compose_base_argv} ${treefile} "$@" && \
+    commit=$(jq -r '.["ostree-commit"]' < "${composejson}") && \
+    ostree --repo=${repo} pull-local ${repobuild} "${treeref:-${commit}}" && \
     echo "$(date): finished compose"
 }
 

@@ -67,6 +67,12 @@ rpmostree_postprocess_run_depmod (int           rootfs_fd,
                                   GError      **error);
 
 gboolean
+rpmostree_postprocess_run_sysusers (int           rootfs_fd,
+                                    gboolean      unified_core_mode,
+                                    GCancellable *cancellable,
+                                    GError      **error);
+
+gboolean
 rpmostree_prepare_rootfs_get_sepolicy (int            dfd,
                                        OstreeSePolicy **out_sepolicy,
                                        GCancellable  *cancellable,

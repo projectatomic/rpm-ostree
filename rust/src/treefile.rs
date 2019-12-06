@@ -39,7 +39,7 @@ pub struct Treefile {
     _workdir: openat::Dir,
     primary_dfd: openat::Dir,
     #[allow(dead_code)] // Not used in tests
-    parsed: TreeComposeConfig,
+    pub(crate) parsed: TreeComposeConfig,
     // This is a copy of rojig.name to avoid needing to convert to CStr when reading
     rojig_name: Option<CUtf8Buf>,
     rojig_spec: Option<CUtf8Buf>,
@@ -325,6 +325,25 @@ fn treefile_merge(dest: &mut TreeComposeConfig, src: &mut TreeComposeConfig) {
     merge_maps!(
         add_commit_metadata
     );
+
+    if let Some(mut src_experimental) = src.experimental.take() {
+        if let Some(ref mut dest_experimental) = dest.experimental {
+            merge_basic_field(
+                &mut dest_experimental.sysusers,
+                &mut src_experimental.sysusers,
+            );
+            merge_map_field(
+                &mut dest_experimental.sysusers_users,
+                &mut src_experimental.sysusers_users,
+            );
+            merge_map_field(
+                &mut dest_experimental.sysusers_groups,
+                &mut src_experimental.sysusers_groups,
+            );
+        } else {
+            dest.experimental = Some(src_experimental)
+        }
+    }
 }
 
 /// Merge the treefile externals. There are currently only two keys that
@@ -410,6 +429,7 @@ impl Treefile {
         let mut seen_includes = collections::BTreeMap::new();
         let mut parsed = treefile_parse_recurse(filename, basearch, 0, &mut seen_includes)?;
         parsed.config = parsed.config.substitute_vars()?;
+        parsed.config.canonicalize();
         Treefile::validate_config(&parsed.config)?;
         let dfd = openat::Dir::open(filename.parent().unwrap())?;
         let (rojig_name, rojig_spec) = if let Some(rojig) = parsed.config.rojig.as_ref() {
@@ -571,7 +591,7 @@ impl Default for BootLocation {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum CheckPasswdType {
     #[serde(rename = "none")]
     None,
@@ -583,7 +603,7 @@ enum CheckPasswdType {
     Data,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct CheckPasswd {
     #[serde(rename = "type")]
     variant: CheckPasswdType,
@@ -612,7 +632,7 @@ enum Include {
 // Option<T>.  The defaults live in the code (e.g. machineid-compat defaults
 // to `true`).
 #[derive(Serialize, Deserialize, Debug)]
-struct TreeComposeConfig {
+pub(crate) struct TreeComposeConfig {
     // Compose controls
     #[serde(rename = "ref")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -738,6 +758,10 @@ struct TreeComposeConfig {
     #[serde(flatten)]
     legacy_fields: LegacyTreeComposeConfigFields,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "experimental")]
+    pub(crate) experimental: Option<ExperimentalTreeComposeConfigFields>,
+
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
 }
@@ -752,6 +776,18 @@ struct LegacyTreeComposeConfigFields {
     default_target: Option<String>,
     #[serde(skip_serializing)]
     automatic_version_prefix: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ExperimentalTreeComposeConfigFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sysusers: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sysusers-users")]
+    pub(crate) sysusers_users: Option<BTreeMap<String, u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sysusers-groups")]
+    pub(crate) sysusers_groups: Option<BTreeMap<String, u32>>,
 }
 
 impl TreeComposeConfig {
@@ -817,6 +853,23 @@ impl TreeComposeConfig {
         hasher.update(serde_json::to_vec(self)?.as_slice());
         Ok(())
     }
+
+    /// Some options override others; perform those overrides.
+    fn canonicalize(&mut self) {
+        // If sysusers is enabled, disable all the other passwd/group related bits.
+        if let Some(ref experimental) = self.experimental {
+            if let Some(true) = experimental.sysusers {
+                self.preserve_passwd = Some(false);
+                self.check_passwd = Some(CheckPasswd {
+                    variant: CheckPasswdType::None,
+                    filename: None,
+                });
+                self.check_groups = self.check_passwd.clone();
+                self.ignore_removed_users = None;
+                self.ignore_removed_groups = None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -880,6 +933,28 @@ remove-files:
             treefile_parse_stream(utils::InputFormat::YAML, &mut input, Some(ARCH_X86_64)).unwrap();
         assert!(treefile.add_files.unwrap().len() == 2);
         assert!(treefile.remove_files.unwrap().len() == 2);
+    }
+
+    #[test]
+    fn basic_valid_sysusers() {
+        let mut buf = VALID_PRELUDE.to_string();
+        buf.push_str(
+            r###"
+experimental:
+  sysusers: true
+  sysusers-users:
+    foo: 42
+    bar: 43
+"###,
+        );
+        let buf = buf.as_bytes();
+        let mut input = io::BufReader::new(buf);
+        let treefile =
+            treefile_parse_stream(InputFormat::YAML, &mut input, Some(ARCH_X86_64)).unwrap();
+        let overrides = treefile.experimental.unwrap().sysusers_users.unwrap();
+        assert_eq!(overrides.len(), 2);
+        assert_eq!(*overrides.get("foo").unwrap(), 42);
+        assert_eq!(*overrides.get("bar").unwrap(), 43);
     }
 
     #[test]
@@ -1286,6 +1361,17 @@ mod ffi {
             rojig.as_ptr()
         } else {
             ptr::null_mut()
+        }
+    }
+
+    #[no_mangle]
+    pub extern "C" fn ror_treefile_get_sysusers(tf: *mut Treefile) -> bool {
+        assert!(!tf.is_null());
+        let tf = unsafe { &mut *tf };
+        if let Some(ref experimental) = tf.parsed.experimental {
+            experimental.sysusers.unwrap_or(false)
+        } else {
+            false
         }
     }
 
