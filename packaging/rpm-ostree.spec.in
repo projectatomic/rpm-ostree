@@ -43,7 +43,7 @@ BuildRequires: gnome-common
 BuildRequires: /usr/bin/g-ir-scanner
 # Core requirements
 # One way to check this: `objdump -p /path/to/rpm-ostree | grep LIBOSTREE` and pick the highest (though that might miss e.g. new struct members)
-BuildRequires: pkgconfig(ostree-1) >= 2019.2
+BuildRequires: pkgconfig(ostree-1) >= 2019.4
 BuildRequires: pkgconfig(polkit-gobject-1)
 BuildRequires: pkgconfig(json-glib-1.0)
 BuildRequires: pkgconfig(rpm)
