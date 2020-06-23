@@ -1,7 +1,8 @@
 AC_PREREQ([2.63])
-dnl To do a release, increment this number and the spec file, commit, then submit it as a PR
+dnl To do a release, increment this number and the spec file, rename the CHANGELOG header,
+dnl and create a new `[Unreleased]` one. Then commit the changes and submit it as a PR
 dnl to merge via prow.  After that, do `git pull origin && git reset --hard origin/master`.
-dnl Then draft release notes highlighting changes and generate the shortlog using
+dnl Then draft release notes from the CHANGELOG.md and generate the shortlog using
 dnl <https://github.com/cgwalters/homegit/blob/master/bin/git-shortlog-with-prs>.
 dnl Then use <https://github.com/cgwalters/git-evtag> to create a signed tag with the
 dnl release notes as its content.
