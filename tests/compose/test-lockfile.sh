@@ -81,6 +81,30 @@ assert_file_has_content out.txt 'test-pkg-common-1.0-1.x86_64'
 assert_not_file_has_content out.txt 'another-test-pkg'
 echo "ok relaxed mode can remove pkg"
 
+# check that we prefer locked packages over unlocked ones to minimize the diff
+build_rpm dodo requires dodo-dep
+build_rpm dodo-dep-a provides dodo-dep
+build_rpm dodo-dep-b provides dodo-dep
+cat > override.lock <<EOF
+{
+  "packages": {
+    "dodo-dep-b": {
+      "evra": "1.0-1.x86_64"
+    }
+  }
+}
+EOF
+treefile_append "packages" '["dodo"]'
+runcompose \
+  --ex-lockfile="$PWD/versions.lock" \
+  --ex-lockfile="$PWD/override.lock" \
+  --dry-run "${treefile}" |& tee out.txt
+assert_file_has_content out.txt 'dodo-1.0-1.x86_64'
+assert_file_has_content out.txt 'dodo-dep-b-1.0-1.x86_64'
+assert_not_file_has_content out.txt 'dodo-dep-a-1.0-1.x86_64'
+echo "ok relaxed mode prefer locked pkg"
+treefile_remove "packages" '"dodo"'
+
 # test strict mode
 
 # sanity-check that refeeding the output lockfile as input satisfies strict mode

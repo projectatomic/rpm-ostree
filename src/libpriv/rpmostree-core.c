@@ -2089,7 +2089,7 @@ rpmostree_context_prepare (RpmOstreeContext *self,
         return FALSE;
 
       /* build a packageset from it */
-      DnfPackageSet *locked_pset = dnf_packageset_new (sack);
+      g_autoptr(DnfPackageSet) locked_pset = dnf_packageset_new (sack);
       for (guint i = 0; i < locked_pkgs->len; i++)
         dnf_packageset_add (locked_pset, locked_pkgs->pdata[i]);
 
@@ -2099,12 +2099,11 @@ rpmostree_context_prepare (RpmOstreeContext *self,
            * exclude everything else. Note we still don't directly do `hy_goal_install`
            * here; we want the treefile to still be canonical, but we just make sure that
            * the end result matches what we expect. */
-          DnfPackageSet *pset = dnf_packageset_new (sack);
+          g_autoptr(DnfPackageSet) pset = dnf_packageset_new (sack);
           Map *map = dnf_packageset_get_map (pset);
           map_setall (map);
           map_subtract (map, dnf_packageset_get_map (locked_pset));
           dnf_sack_add_excludes (sack, pset);
-          dnf_packageset_free (pset);
         }
       else
         {
@@ -2116,11 +2115,10 @@ rpmostree_context_prepare (RpmOstreeContext *self,
               const char *repo = *it;
               hy_autoquery HyQuery query = hy_query_create (sack);
               hy_query_filter (query, HY_PKG_REPONAME, HY_EQ, repo);
-              DnfPackageSet *pset = hy_query_run_set (query);
+              g_autoptr(DnfPackageSet) pset = hy_query_run_set (query);
               Map *map = dnf_packageset_get_map (pset);
               map_subtract (map, dnf_packageset_get_map (locked_pset));
               dnf_sack_add_excludes (sack, pset);
-              dnf_packageset_free (pset);
             }
 
           /* In relaxed mode, we allow packages to be added or removed without having to
@@ -2129,7 +2127,7 @@ rpmostree_context_prepare (RpmOstreeContext *self,
            * filter out from the sack all pkgs which don't match. */
 
           /* map of all packages with names found in the lockfile */
-          DnfPackageSet *named_pkgs = dnf_packageset_new (sack);
+          g_autoptr(DnfPackageSet) named_pkgs = dnf_packageset_new (sack);
           Map *named_pkgs_map = dnf_packageset_get_map (named_pkgs);
           GLNX_HASH_TABLE_FOREACH (self->vlockmap, const char*, nevra)
             {
@@ -2138,18 +2136,19 @@ rpmostree_context_prepare (RpmOstreeContext *self,
                 return FALSE;
               hy_autoquery HyQuery query = hy_query_create (sack);
               hy_query_filter (query, HY_PKG_NAME, HY_EQ, name);
-              DnfPackageSet *pset = hy_query_run_set (query);
+              g_autoptr(DnfPackageSet) pset = hy_query_run_set (query);
               map_or (named_pkgs_map, dnf_packageset_get_map (pset));
-              dnf_packageset_free (pset);
             }
 
           /* remove our locked packages from the exclusion set */
           map_subtract (named_pkgs_map, dnf_packageset_get_map (locked_pset));
           dnf_sack_add_excludes (sack, named_pkgs);
-          dnf_packageset_free (named_pkgs);
-        }
 
-      dnf_packageset_free (locked_pset);
+          /* Additionally, we want libsolv to favor locked packages when choosing between
+           * alternatives. */
+          for (guint i = 0; i < locked_pkgs->len; i++)
+            hy_goal_favor (goal, locked_pkgs->pdata[i]);
+        }
     }
 
   /* Process excludes */
@@ -2158,9 +2157,8 @@ rpmostree_context_prepare (RpmOstreeContext *self,
       const char *pkgname = *iter;
       hy_autoquery HyQuery query = hy_query_create (sack);
       hy_query_filter (query, HY_PKG_NAME, HY_EQ, pkgname);
-      DnfPackageSet *pset = hy_query_run_set (query);
+      g_autoptr(DnfPackageSet) pset = hy_query_run_set (query);
       dnf_sack_add_excludes (sack, pset);
-      dnf_packageset_free (pset);
     }
 
   /* First, handle packages to remove */
