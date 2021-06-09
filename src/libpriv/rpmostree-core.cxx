@@ -2527,6 +2527,33 @@ rpmostree_context_import (RpmOstreeContext *self,
   return TRUE;
 }
 
+// Perform GPG verification for a package, if the repo has gpgcheck=1.
+static gboolean
+validate_package (RpmOstreeContext  *self, DnfPackage *pkg, GError **error)
+{
+  if (!dnf_transaction_ensure_repo (dnf_context_get_transaction (self->dnfctx), pkg, error))
+    return FALSE;
+  DnfRepo *repo = dnf_package_get_repo(pkg);
+  // If there's no repo, or gpgcheck is disabled, we're done.
+  if (repo == NULL || !dnf_repo_get_gpgcheck(repo))
+    return TRUE;
+
+  // Use the QubesOS rpm-oxide to parse and GPG check the RPM
+  try {
+    rpmostreecxx::rpm_gpgcheck_and_payload_validate(dnf_package_get_filename (pkg));
+  } catch (std::exception &e) {
+    g_autofree char *prefix = g_strdup_printf ("Failed to GPG check %s", dnf_package_get_nevra (pkg));
+    util::rethrow_prefixed(e, prefix);
+  }
+
+  // Also use the librpm version for now to ensure we're not reducing security.
+  // This may change in the future.
+  if (!dnf_transaction_gpgcheck_package (dnf_context_get_transaction (self->dnfctx), pkg, error))
+    return FALSE;
+
+  return TRUE;
+}
+
 /* Given a single package, verify its GPG signature (if enabled), open a file
  * descriptor for it, and delete the on-disk downloaded copy.
  */
@@ -2536,8 +2563,7 @@ rpmostree_context_consume_package (RpmOstreeContext  *self,
                                    int               *out_fd,
                                    GError           **error)
 {
-  /* Verify signatures if enabled */
-  if (!dnf_transaction_gpgcheck_package (dnf_context_get_transaction (self->dnfctx), pkg, error))
+  if (!validate_package (self, pkg, error))
     return FALSE;
 
   g_autofree char *pkg_path = rpmostree_pkg_get_local_path (pkg);

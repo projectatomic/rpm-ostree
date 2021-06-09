@@ -60,6 +60,9 @@ phf = { version = "0.8", features = ["macros"] }
 rand = "0.8.3"
 rayon = "1.5.1"
 rpmostree-client = { path = "rust/rpmostree-client", version = "0.1.0" }
+rpm-parser = { git = "https://github.com/QubesOS/qubes-rpm-oxide", tag = "v0.2.2" }
+rpm-crypto = { git = "https://github.com/QubesOS/qubes-rpm-oxide", tag = "v0.2.2" }
+openpgp-parser = { git = "https://github.com/QubesOS/qubes-rpm-oxide", tag = "v0.2.2" }
 rust-ini = "0.17.0"
 serde = { version = "1.0.126", features = ["derive"] }
 serde_derive = "1.0.118"

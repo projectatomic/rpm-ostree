@@ -1035,6 +1035,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "openpgp-parser"
+version = "0.2.2"
+source = "git+https://github.com/QubesOS/qubes-rpm-oxide?tag=v0.2.2#859ee5228358ede5e9365767a0551268dad82e98"
+
+[[package]]
 name = "openssl"
 version = "0.10.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1512,6 +1517,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpm-crypto"
+version = "0.2.2"
+source = "git+https://github.com/QubesOS/qubes-rpm-oxide?tag=v0.2.2#859ee5228358ede5e9365767a0551268dad82e98"
+dependencies = [
+ "openpgp-parser",
+]
+
+[[package]]
+name = "rpm-parser"
+version = "0.2.2"
+source = "git+https://github.com/QubesOS/qubes-rpm-oxide?tag=v0.2.2#859ee5228358ede5e9365767a0551268dad82e98"
+dependencies = [
+ "openpgp-parser",
+ "rpm-crypto",
+]
+
+[[package]]
 name = "rpmostree-client"
 version = "0.1.0"
 dependencies = [
@@ -1551,6 +1573,7 @@ dependencies = [
  "nix",
  "openat",
  "openat-ext",
+ "openpgp-parser",
  "os-release",
  "ostree",
  "ostree-ext",
@@ -1559,6 +1582,8 @@ dependencies = [
  "phf",
  "rand 0.8.3",
  "rayon",
+ "rpm-crypto",
+ "rpm-parser",
  "rpmostree-client",
  "rust-ini",
  "serde",

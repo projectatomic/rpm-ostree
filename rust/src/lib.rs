@@ -421,6 +421,11 @@ pub mod ffi {
         fn cache_branch_to_nevra(nevra: &str) -> String;
     }
 
+    // rpmverify.rs
+    extern "Rust" {
+        fn rpm_gpgcheck_and_payload_validate(path: &str) -> Result<()>;
+    }
+
     unsafe extern "C++" {
         include!("rpmostree-cxxrsutil.hpp");
         type CxxGObjectArray;
@@ -554,6 +559,8 @@ use passwd::*;
 mod console_progress;
 pub(crate) use self::console_progress::*;
 mod progress;
+mod rpmverify;
+pub(crate) use self::rpmverify::*;
 mod scripts;
 pub(crate) use self::scripts::*;
 mod rpmutils;
