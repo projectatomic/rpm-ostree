@@ -396,6 +396,14 @@
       <arg type="s" name="transaction_address" direction="out"/>
     </method>
 
+    <!-- Experimental DownloadPackages -->
+    <method name="DownloadPackages">
+      <!-- array of package names -->
+      <arg type="as" name="queries" direction="in"/>
+      <!-- array of fds -->
+      <arg type="ah" name="fds" direction="out"/>
+      <annotation name="org.gtk.GDBus.C.UnixFD" value="true"/>
+    </method>
   </interface>
 
   <interface name="org.projectatomic.rpmostree1.Transaction">

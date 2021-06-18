@@ -32,6 +32,7 @@
 #include "rpmostree-util.h"
 #include "rpmostreed-transaction.h"
 #include "rpmostreed-transaction-types.h"
+#include "rpmostree-sysroot-core.h"
 
 typedef struct _RpmostreedOSExperimentalClass RpmostreedOSExperimentalClass;
 
@@ -165,11 +166,77 @@ out:
   return TRUE;
 }
 
+static gboolean
+osexperimental_handle_download_packages (RPMOSTreeOSExperimental *interface,
+                              GDBusMethodInvocation *invocation,
+                              GUnixFDList* fds,
+                              const gchar * const *queries)
+{
+  g_autoptr(GCancellable) cancellable = g_cancellable_new ();
+  GError **error = NULL;
+  OstreeSysroot *sysroot = rpmostreed_sysroot_get_root (rpmostreed_sysroot_get ());
+  OstreeDeployment *booted_deployment = ostree_sysroot_get_booted_deployment (sysroot);
+  const char *osname = ostree_deployment_get_osname (booted_deployment);
+
+  g_autoptr(OstreeDeployment) cfg_merge_deployment =
+    ostree_sysroot_get_merge_deployment (sysroot, osname);
+  g_autoptr(OstreeDeployment) origin_merge_deployment =
+    rpmostree_syscore_get_origin_merge_deployment (sysroot, osname);
+
+  /* but set the source root to be the origin merge deployment's so we pick up releasever */
+  g_autofree char *origin_deployment_root =
+    rpmostree_get_deployment_root (sysroot, origin_merge_deployment);
+
+  OstreeRepo *repo = ostree_sysroot_repo (sysroot);
+  g_autoptr(RpmOstreeContext) ctx = rpmostree_context_new_client (repo);
+  rpmostree_context_set_dnf_caching (ctx, RPMOSTREE_CONTEXT_DNF_CACHE_FOREVER);
+
+  /* We could bypass rpmostree_context_setup() here and call dnf_context_setup() ourselves
+   * since we're not actually going to perform any installation. Though it does provide us
+   * with the right semantics for install/source_root. */
+  if (!rpmostree_context_setup (ctx, NULL, origin_deployment_root, cancellable, error))
+    return FALSE;
+  /* point libdnf to our repos dir */
+  rpmostree_context_configure_from_deployment (ctx, sysroot, cfg_merge_deployment);
+
+  if (!rpmostree_context_download_metadata (ctx, DNF_CONTEXT_SETUP_SACK_FLAG_SKIP_RPMDB,
+                                            cancellable, error))
+    return FALSE;
+  DnfSack *sack = dnf_context_get_sack (rpmostree_context_get_dnf (ctx));
+  g_autoptr(DnfContext) dnf_ctx = dnf_context_new ();
+  g_autoptr(GVariant) out_fd_idxs = NULL;
+  GUnixFDList  *fd_list = g_unix_fd_list_new();
+  DnfRepo *dnf_repo = NULL;
+  const gchar *directory = "./";
+  DnfState *state = dnf_context_get_state(dnf_ctx);
+
+  for (unsigned int i = 0; queries[i] != NULL; ++i)
+    {
+      auto query = static_cast<const char*> (queries[i]);
+      g_autoptr(GPtrArray) pkglist = rpmostree_get_matching_packages (sack, query);
+
+      if (!pkglist || pkglist->len == 0)
+        return glnx_throw (error, "No matching packages found for query '%s'", query);
+      if(!dnf_repo_download_packages(dnf_repo, pkglist, directory, state, error))
+        return FALSE;
+
+      if(!rpmostree_sort_pkgs_strv (queries, fd_list, &pkglist, &out_fd_idxs, error))
+        return FALSE;
+
+      if(!dnf_ensure_file_unlinked (directory, error))
+        return FALSE;
+    }
+  rpmostree_osexperimental_complete_download_packages(interface, invocation,
+                                                      fd_list, out_fd_idxs);
+  return TRUE;
+}
+
 static void
 rpmostreed_osexperimental_iface_init (RPMOSTreeOSExperimentalIface *iface)
 {
   iface->handle_moo = osexperimental_handle_moo;
   iface->handle_live_fs = osexperimental_handle_live_fs;
+  iface->handle_download_packages = osexperimental_handle_download_packages;
 }
 
 /* ---------------------------------------------------------------------------------------------------- */
