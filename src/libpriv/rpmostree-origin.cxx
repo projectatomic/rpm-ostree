@@ -45,6 +45,8 @@ struct RpmOstreeOrigin {
   char **cached_initramfs_args;
   GHashTable *cached_initramfs_etc_files;       /* set of paths */
   GHashTable *cached_packages;                  /* set of reldeps */
+  GHashTable *cached_modules_enable;            /* set of module specs to enable */
+  GHashTable *cached_modules_install;           /* set of module specs to install */
   GHashTable *cached_local_packages;            /* NEVRA --> header sha256 */
   /* GHashTable *cached_overrides_replace;         XXX: NOT IMPLEMENTED YET */
   GHashTable *cached_overrides_local_replace;   /* NEVRA --> header sha256 */
@@ -103,6 +105,8 @@ rpmostree_origin_parse_keyfile (GKeyFile         *origin,
   ret->kf = keyfile_dup (origin);
 
   ret->cached_packages = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  ret->cached_modules_enable = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+  ret->cached_modules_install = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
   ret->cached_local_packages =
     g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
   ret->cached_overrides_local_replace =
@@ -138,6 +142,14 @@ rpmostree_origin_parse_keyfile (GKeyFile         *origin,
 
   if (!parse_packages_strv (ret->kf, "packages", "requested-local", TRUE,
                             ret->cached_local_packages, error))
+    return FALSE;
+
+  if (!parse_packages_strv (ret->kf, "modules", "enable", FALSE,
+                            ret->cached_modules_enable, error))
+    return FALSE;
+
+  if (!parse_packages_strv (ret->kf, "modules", "install", FALSE,
+                            ret->cached_modules_install, error))
     return FALSE;
 
   if (!parse_packages_strv (ret->kf, "overrides", "remove", FALSE,
@@ -232,6 +244,18 @@ rpmostree_origin_get_packages (RpmOstreeOrigin *origin)
 }
 
 GHashTable *
+rpmostree_origin_get_modules_enable (RpmOstreeOrigin *origin)
+{
+  return origin->cached_modules_enable;
+}
+
+GHashTable *
+rpmostree_origin_get_modules_install (RpmOstreeOrigin *origin)
+{
+  return origin->cached_modules_install;
+}
+
+GHashTable *
 rpmostree_origin_get_local_packages (RpmOstreeOrigin *origin)
 {
   return origin->cached_local_packages;
@@ -293,6 +317,12 @@ rpmostree_origin_may_require_local_assembly (RpmOstreeOrigin *origin)
         rpmostree_origin_get_regenerate_initramfs (origin) ||
         (g_hash_table_size (origin->cached_initramfs_etc_files) > 0) ||
         (g_hash_table_size (origin->cached_packages) > 0) ||
+        (g_hash_table_size (origin->cached_modules_install) > 0) ||
+        /* Technically, alone it doesn't require require assembly, but it still
+         * requires fetching repo metadata to validate (remember: modules are a
+         * pure rpmmd concept). This means we may pay the cost of an unneeded
+         * tree checkout, but it's not worth trying to optimize for it. */
+        (g_hash_table_size (origin->cached_modules_enable) > 0) ||
         (g_hash_table_size (origin->cached_local_packages) > 0) ||
         (g_hash_table_size (origin->cached_overrides_local_replace) > 0) ||
         (g_hash_table_size (origin->cached_overrides_remove) > 0);
@@ -333,6 +363,8 @@ rpmostree_origin_unref (RpmOstreeOrigin *origin)
   g_free (origin->cached_unconfigured_state);
   g_strfreev (origin->cached_initramfs_args);
   g_clear_pointer (&origin->cached_packages, g_hash_table_unref);
+  g_clear_pointer (&origin->cached_modules_enable, g_hash_table_unref);
+  g_clear_pointer (&origin->cached_modules_install, g_hash_table_unref);
   g_clear_pointer (&origin->cached_local_packages, g_hash_table_unref);
   g_clear_pointer (&origin->cached_overrides_local_replace, g_hash_table_unref);
   g_clear_pointer (&origin->cached_overrides_remove, g_hash_table_unref);
@@ -728,12 +760,58 @@ rpmostree_origin_remove_packages (RpmOstreeOrigin  *origin,
 }
 
 gboolean
+rpmostree_origin_add_modules (RpmOstreeOrigin  *origin,
+                              char           **modules,
+                              gboolean         enable_only,
+                              gboolean        *out_changed,
+                              GError         **error)
+{
+  const char *key = enable_only ? "enable" : "install";
+  GHashTable *target = enable_only ? origin->cached_modules_enable
+                                   : origin->cached_modules_install;
+  gboolean changed = FALSE;
+  for (char **mod = modules; mod && *mod; mod++)
+    changed = (g_hash_table_add (target, g_strdup (*mod)) || changed);
+
+  if (changed)
+    update_string_list_from_hash_table (origin->kf, "modules", key, target);
+  if (out_changed)
+    *out_changed = changed;
+
+  return TRUE;
+}
+
+gboolean
+rpmostree_origin_remove_modules (RpmOstreeOrigin  *origin,
+                                 char           **modules,
+                                 gboolean         enable_only,
+                                 gboolean        *out_changed,
+                                 GError         **error)
+{
+  const char *key = enable_only ? "enable" : "install";
+  GHashTable *target = enable_only ? origin->cached_modules_enable
+                                   : origin->cached_modules_install;
+  gboolean changed = FALSE;
+  for (char **mod = modules; mod && *mod; mod++)
+    changed = (g_hash_table_remove (target, *mod) || changed);
+
+  if (changed)
+    update_string_list_from_hash_table (origin->kf, "modules", key, target);
+  if (out_changed)
+    *out_changed = changed;
+
+  return TRUE;
+}
+
+gboolean
 rpmostree_origin_remove_all_packages (RpmOstreeOrigin  *origin,
                                       gboolean         *out_changed,
                                       GError          **error)
 {
   gboolean changed = FALSE;
   gboolean local_changed = FALSE;
+  gboolean modules_enable_changed = FALSE;
+  gboolean modules_install_changed = FALSE;
 
   if (g_hash_table_size (origin->cached_packages) > 0)
     {
@@ -747,14 +825,32 @@ rpmostree_origin_remove_all_packages (RpmOstreeOrigin  *origin,
       local_changed = TRUE;
     }
 
+  if (g_hash_table_size (origin->cached_modules_enable) > 0)
+    {
+      g_hash_table_remove_all (origin->cached_modules_enable);
+      modules_enable_changed = TRUE;
+    }
+
+  if (g_hash_table_size (origin->cached_modules_install) > 0)
+    {
+      g_hash_table_remove_all (origin->cached_modules_install);
+      modules_install_changed = TRUE;
+    }
+
   if (changed)
     update_keyfile_pkgs_from_cache (origin, "packages", "requested",
                                     origin->cached_packages, FALSE);
   if (local_changed)
     update_keyfile_pkgs_from_cache (origin, "packages", "requested-local",
                                     origin->cached_local_packages, TRUE);
+  if (modules_enable_changed)
+    update_keyfile_pkgs_from_cache (origin, "modules", "enable",
+                                    origin->cached_modules_enable, FALSE);
+  if (modules_install_changed)
+    update_keyfile_pkgs_from_cache (origin, "modules", "install",
+                                    origin->cached_modules_install, FALSE);
   if (out_changed)
-    *out_changed = changed || local_changed;
+    *out_changed = changed || local_changed || modules_enable_changed || modules_install_changed;
   return TRUE;
 }
 

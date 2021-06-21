@@ -172,6 +172,14 @@ os_authorize_method (GDBusInterfaceSkeleton *interface,
         vardict_lookup_strv (&modifiers_dict, "install-packages");
       g_autofree char **uninstall_pkgs =
         vardict_lookup_strv (&modifiers_dict, "uninstall-packages");
+      g_autofree char **enable_modules =
+        vardict_lookup_strv (&modifiers_dict, "enable-modules");
+      g_autofree char **disable_modules =
+        vardict_lookup_strv (&modifiers_dict, "disable-modules");
+      g_autofree char **install_modules =
+        vardict_lookup_strv (&modifiers_dict, "install-modules");
+      g_autofree char **uninstall_modules =
+        vardict_lookup_strv (&modifiers_dict, "uninstall-modules");
       g_autofree const char *const *override_replace_pkgs =
         vardict_lookup_strv (&modifiers_dict, "override-replace-packages");
       g_autofree const char *const *override_remove_pkgs =
@@ -201,7 +209,10 @@ os_authorize_method (GDBusInterfaceSkeleton *interface,
       else if (!no_pull_base)
         g_ptr_array_add (actions, (void*)"org.projectatomic.rpmostree1.upgrade");
 
-      if (install_pkgs != NULL || uninstall_pkgs != NULL || no_layering)
+      if (install_pkgs != NULL || uninstall_pkgs != NULL ||
+          enable_modules != NULL || disable_modules != NULL ||
+          install_modules != NULL || uninstall_modules != NULL ||
+          no_layering)
         g_ptr_array_add (actions, (void*)"org.projectatomic.rpmostree1.install-uninstall-packages");
 
       if (install_local_pkgs != NULL && g_variant_n_children (install_local_pkgs) > 0)

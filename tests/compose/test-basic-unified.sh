@@ -26,6 +26,33 @@ tf['repo-packages'] = [{
 }]
 "
 
+treefile_pyedit "tf['modules'] = {
+  'enable': [],
+  'install': [],
+}"
+
+build_rpm foomodular requires foomodular-ext
+build_rpm foomodular-ext
+build_rpm foomodular-optional
+build_module foomodular \
+  stream mystream \
+  profile myprof:foomodular \
+  rpm foomodular-0:1.0-1.x86_64 \
+  rpm foomodular-ext-0:1.0-1.x86_64 \
+  rpm foomodular-optional-0:1.0-1.x86_64
+treefile_pyedit "tf['modules']['install'] += ['foomodular:mystream/myprof']"
+
+build_rpm barmodular requires barmodular-ext
+build_rpm barmodular-ext
+build_rpm barmodular-optional
+build_module barmodular \
+  stream latest \
+  rpm barmodular-0:1.0-1.x86_64 \
+  rpm barmodular-ext-0:1.0-1.x86_64 \
+  rpm barmodular-optional-0:1.0-1.x86_64
+treefile_pyedit "tf['modules']['enable'] += ['barmodular:latest']"
+treefile_append "packages" '["barmodular"]'
+
 # Test --print-only.  We also
 # just in this test (for now) use ${basearch} to test substitution.
 # shellcheck disable=SC2016
@@ -111,6 +138,15 @@ rpm-ostree db diff --repo="${repo}" "${origrev}" "${newrev}" --advisories > db-d
 assert_not_file_has_content_literal db-diff-adv.txt TEST-SEC-LOW
 assert_file_has_content_literal db-diff-adv.txt TEST-SEC-CRIT
 echo "ok db diff --advisories"
+
+rpm-ostree db list --repo="${repo}" "${treeref}" > db-list.txt
+assert_file_has_content_literal db-list.txt foomodular-1.0-1.x86_64
+assert_file_has_content_literal db-list.txt foomodular-ext-1.0-1.x86_64
+assert_not_file_has_content_literal db-list.txt foomodular-optional
+assert_file_has_content_literal db-list.txt barmodular-1.0-1.x86_64
+assert_file_has_content_literal db-list.txt barmodular-ext-1.0-1.x86_64
+assert_not_file_has_content_literal db-list.txt barmodular-optional
+echo "ok modules"
 
 build_rpm dodo-base
 build_rpm dodo requires dodo-base

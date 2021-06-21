@@ -305,6 +305,114 @@ EOF
                     files "${install_dir}/${name}.pp"
 }
 
+# build a module
+# $1 - module name
+# $2+ - optional, treated as directive/value pairs
+build_module() {
+    # warning: this function is at the boundary of comfortable bash scripting
+    local name=$1; shift
+    local stream=latest
+    local version=$(date +%Y%m%d%H%M%S)
+    local context=$(uuidgen | cut -d- -f1)
+    local arch=x86_64
+
+    declare -A profiles
+    declare -a rpms
+    local requires=
+    while [ $# -ne 0 ]; do
+        local section=$1; shift
+        local arg=$1; shift
+        case $section in
+        stream|version|context|arch|requires)
+            declare $section="$arg";;
+        rpm)
+            rpms+=($arg);;
+        profile)
+            profiles[${arg%:*}]=${arg#*:};;
+        *)
+            assert_not_reached "unhandled section $section";;
+        esac
+    done
+
+    local rendered_profiles="{"
+    for profile in "${!profiles[@]}"; do
+        rendered_profiles+="$profile: {rpms: [${profiles[$profile]}]},"
+    done
+    rendered_profiles+="}"
+
+    # write out the module YAML
+    # see https://docs.fedoraproject.org/en-US/modularity/building-modules/fedora/defining-modules/
+    mkdir -p $test_tmpdir/yumrepo/modules
+    local md=$test_tmpdir/yumrepo/modules/$name:$stream:$version:$context:$arch.modulemd.yaml
+    cat >> $md << EOF
+document: modulemd
+version: 2
+data:
+  name: $name
+  stream: $stream
+  version: $version
+  context: $context
+  arch: $arch
+  summary: $name
+  description: $name
+  license: {module: [MIT]}
+  dependencies:
+  - requires: {platform: []${requires:+, ${requires}}}
+  profiles: $rendered_profiles
+  artifacts:
+    rpms: [$(IFS=,; echo "${rpms[*]}")]
+EOF
+
+    # use --keep-all-metadata to retain previous updateinfo
+    (cd $test_tmpdir/yumrepo &&
+     createrepo_c --no-database --update --keep-all-metadata .)
+}
+
+# build a module defaults file
+# $1 - module name
+# $2+ - optional, treated as directive/value pairs
+build_module_defaults() {
+    local name=$1; shift
+    declare -A defprofiles
+    local defstream=
+    while [ $# -ne 0 ]; do
+        local section=$1; shift
+        local arg=$1; shift
+        case $section in
+        defstream)
+            defstream="$arg";;
+        defprofile)
+            defprofiles[${arg%:*}]=${arg#*:};;
+        *)
+            assert_not_reached "unhandled section $section";;
+        esac
+    done
+
+    local rendered_dict="{"
+    for stream in "${!defprofiles[@]}"; do
+        rendered_dict+="$stream: [${defprofiles[$stream]}],"
+    done
+    rendered_dict+="}"
+
+    # write out the module defaults YAML
+    # see https://github.com/fedora-modularity/libmodulemd/blob/8577d670e88b9a0938428df80bfbdfe6b69698de/yaml_specs/modulemd_defaults_v1.yaml
+    mkdir -p $test_tmpdir/yumrepo/modules
+    local md=$test_tmpdir/yumrepo/modules/$name.modulemd-defaults.yaml
+        cat >> $md << EOF
+document: modulemd-defaults
+version: 1
+data:
+  module: $name
+  modified: $(date +%Y%m%d%H%M)
+  ${defstream:+stream: ${defstream}}
+  profiles: ${rendered_dict}
+EOF
+
+    # use --keep-all-metadata to retain previous updateinfo
+    (cd $test_tmpdir/yumrepo &&
+     createrepo_c --no-database --update --keep-all-metadata .)
+}
+
 files_are_hardlinked() {
     inode1=$(stat -c %i $1)
     inode2=$(stat -c %i $2)

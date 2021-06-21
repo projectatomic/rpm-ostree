@@ -216,6 +216,8 @@ rpmostree_treespec_new_from_keyfile (GKeyFile   *keyfile,
   g_variant_builder_init (&builder, (GVariantType*)"a{sv}");
 
   add_canonicalized_string_array (&builder, "packages", NULL, keyfile);
+  add_canonicalized_string_array (&builder, "modules-enable", NULL, keyfile);
+  add_canonicalized_string_array (&builder, "modules-install", NULL, keyfile);
   add_canonicalized_string_array (&builder, "exclude-packages", NULL, keyfile);
   add_canonicalized_string_array (&builder, "cached-packages", NULL, keyfile);
   add_canonicalized_string_array (&builder, "removed-base-packages", NULL, keyfile);
@@ -750,6 +752,28 @@ rpmostree_context_setup (RpmOstreeContext    *self,
   if (!dnf_context_setup (self->dnfctx, cancellable, error))
     return FALSE;
 
+  /* XXX: If we have modules to install, then we need libdnf to handle it, and
+   * we can't avoid not parsing repodata because modules are entirely a repodata
+   * concept. So for now, force off pkgcache-only. This means that e.g. client
+   * side operations that are normally cache-only like `rpm-ostree uninstall`
+   * will still try to fetch metadata, and might install newer versions of other
+   * packages... we can probably hack that in the future. */
+  if (self->pkgcache_only)
+    {
+      gboolean disable_cacheonly = FALSE;
+      g_autofree char **modules_enable = NULL;
+      if (g_variant_dict_lookup (self->spec->dict, "modules-enable", "^a&s", &modules_enable))
+        disable_cacheonly = disable_cacheonly || (modules_enable && g_strv_length (modules_enable) > 0);
+      g_autofree char **modules_install = NULL;
+      if (g_variant_dict_lookup (self->spec->dict, "modules-install", "^a&s", &modules_install))
+        disable_cacheonly = disable_cacheonly || (modules_install && g_strv_length (modules_install) > 0);
+      if (disable_cacheonly)
+        {
+          self->pkgcache_only = FALSE;
+          sd_journal_print (LOG_WARNING, "Ignoring pkgcache-only request in presence of module requests");
+        }
+    }
+
   /* disable all repos in pkgcache-only mode, otherwise obey "repos" key */
   if (self->pkgcache_only)
     {
@@ -1178,18 +1202,6 @@ rpmostree_context_download_metadata (RpmOstreeContext *self,
       return FALSE;
     g_signal_handler_disconnect (hifstate, progress_sigid);
   }
-
-  /* For now, we don't natively support modules. But we still want to be able to install
-   * modular packages if the repos are enabled, but libdnf automatically filters them out.
-   * So for now, let's tell libdnf that we do want to be able to see them. See:
-   * https://github.com/projectatomic/rpm-ostree/issues/1435 */
-  dnf_sack_set_module_excludes (dnf_context_get_sack (self->dnfctx), NULL);
-  /* And also mark all repos as hotfix repos so that we can indiscriminately cherry-pick
-   * from modular repos and non-modular repos alike. */
-  g_autoptr(GPtrArray) repos =
-    rpmostree_get_enabled_rpmmd_repos (self->dnfctx, DNF_REPO_ENABLED_PACKAGES);
-  for (guint i = 0; i < repos->len; i++)
-    dnf_repo_set_module_hotfixes (static_cast<DnfRepo*>(repos->pdata[i]), TRUE);
 
   return TRUE;
 }
@@ -1888,6 +1900,14 @@ rpmostree_context_prepare (RpmOstreeContext *self,
   g_variant_dict_lookup (self->spec->dict, "exclude-packages",
                          "^a&s", &exclude_packages);
 
+  g_autofree char **modules_enable = NULL;
+  g_assert (g_variant_dict_lookup (self->spec->dict, "modules-enable",
+                                   "^a&s", &modules_enable));
+
+  g_autofree char **modules_install = NULL;
+  g_assert (g_variant_dict_lookup (self->spec->dict, "modules-install",
+                                   "^a&s", &modules_install));
+
   g_autofree char **cached_pkgnames = NULL;
   g_assert (g_variant_dict_lookup (self->spec->dict, "cached-packages",
                                    "^a&s", &cached_pkgnames));
@@ -1919,7 +1939,6 @@ rpmostree_context_prepare (RpmOstreeContext *self,
    */
   dnf_sack_set_installonly (sack, NULL);
   dnf_sack_set_installonly_limit (sack, 0);
-
 
   if (self->lockfile)
     {
@@ -2084,8 +2103,11 @@ rpmostree_context_prepare (RpmOstreeContext *self,
     hy_goal_install (goal,  pkg);
 
   /* Now repo-packages; only supported during server composes for now. */
+  g_autoptr(DnfPackageSet) pinned_pkgs = NULL;
   if (!self->is_system)
     {
+      pinned_pkgs = dnf_packageset_new (sack);
+      Map *pinned_pkgs_map = dnf_packageset_get_map (pinned_pkgs);
       auto repo_pkgs = self->treefile_rs->get_repo_packages();
       for (auto & repo_pkg : repo_pkgs)
         {
@@ -2108,8 +2130,39 @@ rpmostree_context_prepare (RpmOstreeContext *self,
               hy_selector_pkg_set (selector, pset);
               if (!hy_goal_install_selector (goal, selector, error))
                 return FALSE;
+
+              map_or (pinned_pkgs_map, dnf_packageset_get_map (pset));
             }
         }
+    }
+
+  gboolean we_got_modules = FALSE;
+  if (g_strv_length (modules_enable) > 0)
+    {
+      if (!dnf_context_module_enable (dnfctx, (const char**)modules_enable, error))
+        return FALSE;
+      we_got_modules = TRUE;
+    }
+
+  if (g_strv_length (modules_install) > 0)
+    {
+      if (!dnf_context_module_install (dnfctx, (const char**)modules_install, error))
+        return glnx_prefix_error (error, "Installing modules");
+      we_got_modules = TRUE;
+    }
+
+  /* By default, when enabling a module, trying to install a package "foo" will
+   * always prioritize the "foo" in the module. This is what we want, but in the
+   * case of pinned repo packages, we want to be able to override that. So we
+   * need to fiddle with the modular excludes. */
+  if (we_got_modules && pinned_pkgs && dnf_packageset_count (pinned_pkgs) > 0)
+    {
+      g_autoptr(DnfPackageSet) excludes = dnf_sack_get_module_excludes (sack);
+      g_autoptr(DnfPackageSet) cloned_pkgs = dnf_packageset_clone (pinned_pkgs);
+      Map *m = dnf_packageset_get_map (cloned_pkgs);
+      map_invertall (m);
+      map_and (dnf_packageset_get_map (excludes), m);
+      dnf_sack_set_module_excludes (sack, excludes);
     }
 
   /* And finally, handle repo packages to install */
@@ -4491,6 +4544,12 @@ rpmostree_context_commit (RpmOstreeContext      *self,
         g_assert (pkgs);
         g_variant_builder_add (&metadata_builder, "{sv}", "rpmostree.packages", pkgs);
 
+        /* embed modules layered */
+        g_autoptr(GVariant) modules =
+          g_variant_dict_lookup_value (self->spec->dict, "modules-install", G_VARIANT_TYPE ("as"));
+        g_assert (modules);
+        g_variant_builder_add (&metadata_builder, "{sv}", "rpmostree.modules", modules);
+
         /* embed packages removed */
         /* we have to embed both the pkgname and the full nevra to make it easier to match
          * them up with origin directives. the full nevra is used for status -v */
@@ -4527,7 +4586,7 @@ rpmostree_context_commit (RpmOstreeContext      *self,
         /* be nice to our future selves */
         g_variant_builder_add (&metadata_builder, "{sv}",
                                "rpmostree.clientlayer_version",
-                               g_variant_new_uint32 (4));
+                               g_variant_new_uint32 (5));
       }
     else if (assemble_type == RPMOSTREE_ASSEMBLE_TYPE_SERVER_BASE)
       {

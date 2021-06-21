@@ -511,6 +511,7 @@ rpmostree_deployment_get_layered_info (OstreeRepo        *repo,
                                        guint             *out_layer_version,
                                        char             **out_base_layer,
                                        char            ***out_layered_pkgs,
+                                       char            ***out_layered_modules,
                                        GVariant         **out_removed_base_pkgs,
                                        GVariant         **out_replaced_base_pkgs,
                                        GError           **error)
@@ -527,6 +528,7 @@ rpmostree_deployment_get_layered_info (OstreeRepo        *repo,
 
   /* only fetch pkgs if we have to */
   g_auto(GStrv) layered_pkgs = NULL;
+  g_auto(GStrv) layered_modules = NULL;
   g_autoptr(GVariant) removed_base_pkgs = NULL;
   g_autoptr(GVariant) replaced_base_pkgs = NULL;
   if (layeredmeta.is_layered && (out_layered_pkgs != NULL || out_removed_base_pkgs != NULL))
@@ -567,6 +569,12 @@ rpmostree_deployment_get_layered_info (OstreeRepo        *repo,
                                          G_VARIANT_TYPE ("a(vv)"));
           g_assert (replaced_base_pkgs);
         }
+
+      if (layeredmeta.clientlayer_version >= 5)
+        {
+          g_assert (g_variant_dict_lookup (dict, "rpmostree.modules", "^as",
+                                           &layered_modules));
+        }
     }
 
   /* canonicalize outputs to empty array */
@@ -582,6 +590,12 @@ rpmostree_deployment_get_layered_info (OstreeRepo        *repo,
       if (!layered_pkgs)
         layered_pkgs = g_new0 (char*, 1);
       *out_layered_pkgs = util::move_nullify (layered_pkgs);
+    }
+  if (out_layered_modules != NULL)
+    {
+      if (!layered_modules)
+        layered_modules = g_new0 (char*, 1);
+      *out_layered_modules = util::move_nullify (layered_modules);
     }
   if (out_removed_base_pkgs != NULL)
     {
@@ -609,7 +623,7 @@ rpmostree_deployment_get_base_layer (OstreeRepo        *repo,
                                      GError           **error)
 {
   return rpmostree_deployment_get_layered_info (repo, deployment, NULL, NULL,
-                                                out_base_layer, NULL, NULL, NULL, error);
+                                                out_base_layer, NULL, NULL, NULL, NULL, error);
 }
 
 static gboolean
@@ -1140,7 +1154,7 @@ rpmostree_maybe_shell_quote (const char *s)
   static GRegex *safe_chars_regex;
   if (g_once_init_enter (&regex_initialized))
     {
-      safe_chars_regex = g_regex_new ("^[[:alnum:]-._/=]+$", (GRegexCompileFlags)0, (GRegexMatchFlags)0, NULL);
+      safe_chars_regex = g_regex_new ("^[[:alnum:]-._/=:]+$", (GRegexCompileFlags)0, (GRegexMatchFlags)0, NULL);
       g_assert (safe_chars_regex);
       g_once_init_leave (&regex_initialized, 1);
     }

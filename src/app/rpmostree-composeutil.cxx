@@ -187,6 +187,15 @@ rpmostree_composeutil_get_treespec (RpmOstreeContext  *ctx,
   if (!treespec_bind_array (treedata, treespec, "install-langs", "instlangs", FALSE, error))
     return NULL;
 
+  if (json_object_has_member (treedata, "modules"))
+    {
+      JsonObject *modules = json_object_get_object_member (treedata, "modules");
+      if (!treespec_bind_array (modules, treespec, "enable", "modules-enable", FALSE, error))
+        return NULL;
+      if (!treespec_bind_array (modules, treespec, "install", "modules-install", FALSE, error))
+        return NULL;
+    }
+
   return rpmostree_treespec_new_from_keyfile (treespec, error);
 }
 

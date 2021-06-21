@@ -78,6 +78,12 @@ GHashTable *
 rpmostree_origin_get_packages (RpmOstreeOrigin *origin);
 
 GHashTable *
+rpmostree_origin_get_modules_enable (RpmOstreeOrigin *origin);
+
+GHashTable *
+rpmostree_origin_get_modules_install (RpmOstreeOrigin *origin);
+
+GHashTable *
 rpmostree_origin_get_local_packages (RpmOstreeOrigin *origin);
 
 GHashTable *
@@ -170,6 +176,20 @@ gboolean
 rpmostree_origin_remove_all_packages (RpmOstreeOrigin  *origin,
                                       gboolean         *out_changed,
                                       GError          **error);
+
+gboolean
+rpmostree_origin_add_modules (RpmOstreeOrigin  *origin,
+                              char           **modules,
+                              gboolean         enable_only,
+                              gboolean        *out_changed,
+                              GError         **error);
+
+gboolean
+rpmostree_origin_remove_modules (RpmOstreeOrigin  *origin,
+                                 char           **modules,
+                                 gboolean         enable_only,
+                                 gboolean        *out_changed,
+                                 GError         **error);
 
 typedef enum {
   /* RPMOSTREE_ORIGIN_OVERRIDE_REPLACE, */

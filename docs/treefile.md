@@ -79,6 +79,15 @@ It supports the following parameters:
    * `packages`: Array of strings, required: List of packages to install.
    * `repo`: String, required: Name of the repo from which to fetch packages.
 
+ * `modules`: Object, optional: Describes RPM modules to enable or install. Two
+   keys are supported:
+   * `enable`: Array of strings, required: Set of RPM module specs to enable
+     (the same formats as dnf are supported, e.g. `NAME[:STREAM]`).
+     One can then cherry-pick specific packages from the enabled modules via
+     `packages`.
+   * `install`: Array of strings, required: Set of RPM module specs to install
+     (the same formats as dnf are supported, e.g. `NAME[:STREAM][/PROFILE]`).
+
  * `ostree-layers`: Array of strings, optional: After all packages are unpacked,
     check out these OSTree refs, which must already be in the destination repository.
     Any conflicts with packages will be an error.

@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 
 use glib::translate::*;
+use glib::ToVariant;
 
 // These constants should really be in gtk-rs
 lazy_static::lazy_static! {
@@ -38,6 +39,11 @@ pub(crate) fn new_variant_array(ty: &glib::VariantTy, children: &[glib::Variant]
         glib_sys::g_variant_ref_sink(r);
         from_glib_full(r)
     }
+}
+
+pub(crate) fn new_variant_strv(strv: &[impl AsRef<str>]) -> glib::Variant {
+    let v: Vec<glib::Variant> = strv.iter().map(|s| s.as_ref().to_variant()).collect();
+    new_variant_array(&TY_S, &v)
 }
 
 pub(crate) fn is_container(v: &glib::Variant) -> bool {

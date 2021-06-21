@@ -257,10 +257,11 @@ rpmostreed_deployment_generate_variant (OstreeSysroot    *sysroot,
   gboolean is_layered = FALSE;
   g_autofree char *base_checksum = NULL;
   g_auto(GStrv) layered_pkgs = NULL;
+  g_auto(GStrv) layered_modules = NULL;
   g_autoptr(GVariant) removed_base_pkgs = NULL;
   g_autoptr(GVariant) replaced_base_pkgs = NULL;
   if (!rpmostree_deployment_get_layered_info (repo, deployment, &is_layered, NULL,
-                                              &base_checksum, &layered_pkgs,
+                                              &base_checksum, &layered_pkgs, &layered_modules,
                                               &removed_base_pkgs, &replaced_base_pkgs,
                                               error))
     return NULL;
@@ -344,6 +345,10 @@ rpmostreed_deployment_generate_variant (OstreeSysroot    *sysroot,
 
   variant_add_from_hash_table (dict, "requested-packages",
                                rpmostree_origin_get_packages (origin));
+  variant_add_from_hash_table (dict, "modules-enabled",
+                               rpmostree_origin_get_modules_enable (origin));
+  variant_add_from_hash_table (dict, "requested-modules",
+                               rpmostree_origin_get_modules_install (origin));
   variant_add_from_hash_table (dict, "requested-local-packages",
                                rpmostree_origin_get_local_packages (origin));
   variant_add_from_hash_table (dict, "requested-base-removals",
@@ -352,6 +357,7 @@ rpmostreed_deployment_generate_variant (OstreeSysroot    *sysroot,
                                rpmostree_origin_get_overrides_local_replace (origin));
 
   g_variant_dict_insert (dict, "packages", "^as", layered_pkgs);
+  g_variant_dict_insert (dict, "modules", "^as", layered_modules);
   g_variant_dict_insert_value (dict, "base-removals", removed_base_pkgs);
   g_variant_dict_insert_value (dict, "base-local-replacements", replaced_base_pkgs);
 

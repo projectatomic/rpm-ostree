@@ -82,6 +82,7 @@ struct RpmOstreeSysrootUpgrader {
   DnfSack *rpmmd_sack; /* sack from core */
 
   GPtrArray *overlay_packages; /* Finalized list of pkgs to overlay */
+  GPtrArray *overlay_modules; /* Finalized list of modules to overlay */
   GPtrArray *override_remove_packages; /* Finalized list of base pkgs to remove */
   GPtrArray *override_replace_local_packages; /* Finalized list of local base pkgs to replace */
 
@@ -224,6 +225,7 @@ rpmostree_sysroot_upgrader_finalize (GObject *object)
   g_free (self->final_revision);
   g_strfreev (self->kargs_strv);
   g_clear_pointer (&self->overlay_packages, (GDestroyNotify)g_ptr_array_unref);
+  g_clear_pointer (&self->overlay_modules, (GDestroyNotify)g_ptr_array_unref);
   g_clear_pointer (&self->override_remove_packages, (GDestroyNotify)g_ptr_array_unref);
 
   G_OBJECT_CLASS (rpmostree_sysroot_upgrader_parent_class)->finalize (object);
@@ -632,6 +634,22 @@ generate_treespec (RpmOstreeSysrootUpgrader *self)
                                   self->overlay_packages->len);
     }
 
+  GHashTable *enable_modules = rpmostree_origin_get_modules_enable (self->origin);
+  if (g_hash_table_size (enable_modules) > 0)
+    {
+      guint length = 0;
+      g_autofree char **modules = (char**)g_hash_table_get_keys_as_array (enable_modules, &length);
+      g_key_file_set_string_list (treespec, "tree", "modules-enable",
+                                  (const char* const*)modules, length);
+    }
+
+  if (self->overlay_modules->len > 0)
+    {
+      g_key_file_set_string_list (treespec, "tree", "modules-install",
+                                  (const char* const*)self->overlay_modules->pdata,
+                                  self->overlay_modules->len);
+    }
+
   GHashTable *local_packages = rpmostree_origin_get_local_packages (self->origin);
   if (g_hash_table_size (local_packages) > 0)
     {
@@ -785,7 +803,8 @@ finalize_overlays (RpmOstreeSysrootUpgrader *self,
   /* request (owned by origin) --> providing nevra */
   g_autoptr(GHashTable) inactive_requests =
     g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
-  g_autoptr(GPtrArray) ret_missing_pkgs = g_ptr_array_new_with_free_func (g_free);
+  g_autoptr(GPtrArray) missing_pkgs = g_ptr_array_new_with_free_func (g_free);
+  g_autoptr(GPtrArray) missing_modules = g_ptr_array_new_with_free_func (g_free);
 
   /* Add the local pkgs as if they were installed: since they're unconditionally
    * layered, we treat them as part of the base wrt regular requested pkgs. E.g.
@@ -836,7 +855,7 @@ finalize_overlays (RpmOstreeSysrootUpgrader *self,
       if (matches->len == 0)
         {
           /* no matches, so we'll need to layer it */
-          g_ptr_array_add (ret_missing_pkgs, g_strdup (pattern));
+          g_ptr_array_add (missing_pkgs, g_strdup (pattern));
           continue;
         }
 
@@ -866,6 +885,26 @@ finalize_overlays (RpmOstreeSysrootUpgrader *self,
                            g_strdup (providing_nevra));
     }
 
+  if (g_hash_table_size (rpmostree_origin_get_modules_install (self->origin)) > 0)
+    {
+      /* XXX: Currently, we don't retain information about which modules were
+       * installed in the commit metadata. So we can't really detect "inactive"
+       * requests. See related discussions in
+       * https://github.com/rpm-software-management/libdnf/pull/1207.
+       *
+       * In the future, here we could extract e.g. the NSVCAPs from the base
+       * commit, and mark as inactive all the requests for module names (and
+       * optionally streams) already installed.
+       *
+       * For now, just pass through.
+       */
+      GLNX_HASH_TABLE_FOREACH (rpmostree_origin_get_modules_install (self->origin),
+                               const char*, module_spec)
+        {
+          g_ptr_array_add (missing_modules, g_strdup (module_spec));
+        }
+    }
+
   if (g_hash_table_size (inactive_requests) > 0)
     {
       rpmostree_output_message ("Inactive requests:");
@@ -874,7 +913,9 @@ finalize_overlays (RpmOstreeSysrootUpgrader *self,
     }
 
   g_assert (!self->overlay_packages);
-  self->overlay_packages = util::move_nullify (ret_missing_pkgs);
+  g_assert (!self->overlay_modules);
+  self->overlay_packages = util::move_nullify (missing_pkgs);
+  self->overlay_modules = util::move_nullify (missing_modules);
   return TRUE;
 }
 
@@ -944,6 +985,7 @@ prep_local_assembly (RpmOstreeSysrootUpgrader *self,
     return FALSE;
 
   const gboolean have_packages = (self->overlay_packages->len > 0 ||
+                                  self->overlay_modules->len > 0 ||
                                   g_hash_table_size (local_pkgs) > 0 ||
                                   self->override_remove_packages->len > 0 ||
                                   self->override_replace_local_packages->len > 0);
@@ -959,6 +1001,13 @@ prep_local_assembly (RpmOstreeSysrootUpgrader *self,
     }
   else
     {
+      /* We still want to prepare() even if there's only enabled modules to validate.
+       * See comment in rpmostree_origin_may_require_local_assembly(). */
+      if (g_hash_table_size (rpmostree_origin_get_modules_enable (self->origin)) > 0)
+        {
+          if (!rpmostree_context_prepare (self->ctx, cancellable, error))
+            return FALSE;
+        }
       rpmostree_context_set_is_empty (self->ctx);
       self->layering_type = RPMOSTREE_SYSROOT_UPGRADER_LAYERING_LOCAL;
     }
@@ -1156,6 +1205,9 @@ requires_local_assembly (RpmOstreeSysrootUpgrader *self)
 
   return rpmostree_origin_get_cliwrap (self->origin) ||
          self->overlay_packages->len > 0 ||
+         self->overlay_modules->len > 0 ||
+         /* see comment in rpmostree_origin_may_require_local_assembly */
+         g_hash_table_size (rpmostree_origin_get_modules_enable (self->origin)) > 0 ||
          self->override_remove_packages->len > 0 ||
          self->override_replace_local_packages->len > 0 ||
          g_hash_table_size (rpmostree_origin_get_local_packages (self->origin)) > 0 ||
