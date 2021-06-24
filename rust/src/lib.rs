@@ -554,6 +554,7 @@ mod lockfile;
 pub(crate) use self::lockfile::*;
 mod live;
 pub(crate) use self::live::*;
+pub mod modularity;
 mod nameservice;
 // An origin parser in Rust but only built when testing until
 // we're ready to try porting the C++ code.

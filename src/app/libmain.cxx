@@ -103,10 +103,8 @@ static RpmOstreeCommand commands[] = {
   /* Rust-implemented commands; they're here so that they show up in `rpm-ostree
    * --help` alongside the other commands, but the command itself is fully
    *  handled Rust side. */
-  /*
-  { "my-rust-command", static_cast<RpmOstreeBuiltinFlags>(0),
-    "Cool thing my command does", NULL },
-  */
+  { "module", static_cast<RpmOstreeBuiltinFlags>(0),
+    "Commands to install/uninstall modules", NULL },
   /* Legacy aliases */
   { "pkg-add", static_cast<RpmOstreeBuiltinFlags>(RPM_OSTREE_BUILTIN_FLAG_HIDDEN),
     NULL, rpmostree_builtin_install },

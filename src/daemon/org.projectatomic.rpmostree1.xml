@@ -298,6 +298,8 @@
          "install-packages" (type 'as')
          "uninstall-packages" (type 'as')
          "install-local-packages" (type 'ah')
+         "install-modules" (type 'as')
+         "uninstall-modules" (type 'as')
          "override-remove-packages" (type 'as')
          "override-reset-packages" (type 'as')
          "override-replace-packages" (type 'as')

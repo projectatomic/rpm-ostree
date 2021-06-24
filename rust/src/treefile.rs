@@ -133,6 +133,17 @@ fn treefile_parse_stream<R: io::Read>(
         }
     }
 
+    // to be consistent, we also support whitespace-separated modules
+    if let Some(mut modules) = treefile.modules.take() {
+        if let Some(enable) = modules.enable.take() {
+            modules.enable = Some(whitespace_split_packages(&enable)?);
+        }
+        if let Some(install) = modules.install.take() {
+            modules.install = Some(whitespace_split_packages(&install)?);
+        }
+        treefile.modules = Some(modules);
+    }
+
     if let Some(repo_packages) = treefile.repo_packages.take() {
         treefile.repo_packages = Some(
             repo_packages
@@ -317,6 +328,18 @@ fn merge_hashset_field<T: Eq + std::hash::Hash>(
     }
 }
 
+/// Merge modules fields.
+fn merge_modules(dest: &mut Option<ModulesConfig>, src: &mut Option<ModulesConfig>) {
+    if let Some(mut srcv) = src.take() {
+        if let Some(mut destv) = dest.take() {
+            merge_vec_field(&mut destv.enable, &mut srcv.enable);
+            merge_vec_field(&mut destv.install, &mut srcv.install);
+            srcv = destv;
+        }
+        *dest = Some(srcv);
+    }
+}
+
 /// Given two configs, merge them.
 fn treefile_merge(dest: &mut TreeComposeConfig, src: &mut TreeComposeConfig) {
     macro_rules! merge_basics {
@@ -386,6 +409,8 @@ fn treefile_merge(dest: &mut TreeComposeConfig, src: &mut TreeComposeConfig) {
         remove_from_packages,
         repo_packages
     );
+
+    merge_modules(&mut dest.modules, &mut src.modules);
 }
 
 /// Merge the treefile externals. There are currently only two keys that
@@ -1017,6 +1042,8 @@ pub(crate) struct TreeComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "repo-packages")]
     pub(crate) repo_packages: Option<Vec<RepoPackage>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) modules: Option<ModulesConfig>,
     // Deprecated option
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) bootstrap_packages: Option<Vec<String>>,
@@ -1139,6 +1166,14 @@ pub(crate) struct TreeComposeConfig {
 pub(crate) struct RepoPackage {
     pub(crate) repo: String,
     pub(crate) packages: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
+pub(crate) struct ModulesConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) enable: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) install: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -1274,6 +1309,12 @@ pub(crate) mod tests {
             - repo: baserepo
               packages:
                 - blah bloo
+        modules:
+           enable:
+             - foobar:2.0
+           install:
+             - nodejs:15
+             - swig:3.0/complete sway:rolling
     "#};
 
     // This one has "comments" (hence unknown keys)
@@ -1536,6 +1577,11 @@ pub(crate) mod tests {
                     - repo: foo2
                       packages:
                         - qwert
+                modules:
+                    enable:
+                      - dodo
+                    install:
+                      - bazboo
             "},
         )?;
         let mut buf = VALID_PRELUDE.to_string();
@@ -1556,6 +1602,18 @@ pub(crate) mod tests {
                     packages: vec!["blah".into(), "bloo".into()],
                 }
             ])
+        );
+        assert_eq!(
+            tf.parsed.modules,
+            Some(ModulesConfig {
+                enable: Some(vec!["dodo".into(), "foobar:2.0".into()]),
+                install: Some(vec![
+                    "bazboo".into(),
+                    "nodejs:15".into(),
+                    "swig:3.0/complete".into(),
+                    "sway:rolling".into(),
+                ])
+            },)
         );
         Ok(())
     }

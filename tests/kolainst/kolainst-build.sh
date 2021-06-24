@@ -56,6 +56,23 @@ build_rpm testdaemon \
 # Will be useful for testing cancellation
 build_rpm testpkg-post-infinite-loop \
              post "echo entering testpkg-post-infinite-loop 1>&2; while true; do sleep 1h; done"
+# Test module
+build_rpm foomodular
+build_module foomodular \
+  stream no-profile \
+  rpm foomodular-0:1.0-1.x86_64
+build_module foomodular \
+  stream no-default-profile \
+  profile myprof:foomodular \
+  profile myotherprof:foomodular \
+  rpm foomodular-0:1.0-1.x86_64
+build_module foomodular \
+  stream with-default-profile \
+  profile default:foomodular \
+  profile myotherprof:foomodular \
+  rpm foomodular-0:1.0-1.x86_64
+build_module_defaults foomodular \
+  defprofile with-default-profile:default
 
 mv ${test_tmpdir}/yumrepo/* ${test_tmpdir}/rpm-repos/${repover}
 

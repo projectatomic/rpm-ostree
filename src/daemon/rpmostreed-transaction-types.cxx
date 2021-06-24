@@ -577,6 +577,10 @@ typedef struct {
   char  **install_pkgs; /* strv but strings owned by modifiers */
   GUnixFDList *install_local_pkgs;
   char  **uninstall_pkgs; /* strv but strings owned by modifiers */
+  char  **enable_modules; /* strv but strings owned by modifiers */
+  char  **disable_modules; /* strv but strings owned by modifiers */
+  char  **install_modules; /* strv but strings owned by modifiers */
+  char  **uninstall_modules; /* strv but strings owned by modifiers */
   char  **override_replace_pkgs; /* strv but strings owned by modifiers */
   GUnixFDList *override_replace_local_pkgs;
   char  **override_remove_pkgs; /* strv but strings owned by modifiers */
@@ -606,6 +610,10 @@ deploy_transaction_finalize (GObject *object)
   g_free (self->install_pkgs);
   g_clear_pointer (&self->install_local_pkgs, g_object_unref);
   g_free (self->uninstall_pkgs);
+  g_free (self->enable_modules);
+  g_free (self->disable_modules);
+  g_free (self->install_modules);
+  g_free (self->uninstall_modules);
   g_free (self->override_replace_pkgs);
   g_clear_pointer (&self->override_replace_local_pkgs, g_object_unref);
   g_free (self->override_remove_pkgs);
@@ -875,7 +883,7 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
   const gboolean idempotent_layering = deploy_has_bool_option (self, "idempotent-layering");
   const gboolean download_only =
     ((self->flags & RPMOSTREE_TRANSACTION_DEPLOY_FLAG_DOWNLOAD_ONLY) > 0);
-  /* Mainly for the `install` and `override` commands */
+  /* Mainly for the `install`, `module install`, and `override` commands */
   const gboolean no_pull_base =
     ((self->flags & RPMOSTREE_TRANSACTION_DEPLOY_FLAG_NO_PULL_BASE) > 0);
   /* Used to background check for updates; this essentially means downloading the minimum
@@ -901,7 +909,7 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
                      no_overrides);
       if (!is_override)
         {
-          if (self->install_pkgs || self->install_local_pkgs)
+          if (self->install_pkgs || self->install_local_pkgs || self->install_modules)
             is_install = TRUE;
           else
             is_uninstall = TRUE;
@@ -952,12 +960,24 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
       if (self->uninstall_pkgs)
         g_string_append_printf (txn_title, "; uninstall: %u",
                                 g_strv_length (self->uninstall_pkgs));
+      if (self->disable_modules)
+        g_string_append_printf (txn_title, "; module disable: %u",
+                                g_strv_length (self->disable_modules));
+      if (self->uninstall_modules)
+        g_string_append_printf (txn_title, "; module uninstall: %u",
+                                g_strv_length (self->uninstall_modules));
       if (self->install_pkgs)
         g_string_append_printf (txn_title, "; install: %u",
                                 g_strv_length (self->install_pkgs));
       if (self->install_local_pkgs)
         g_string_append_printf (txn_title, "; localinstall: %u",
                                 g_unix_fd_list_get_length (self->install_local_pkgs));
+      if (self->enable_modules)
+        g_string_append_printf (txn_title, "; module enable: %u",
+                                g_strv_length (self->enable_modules));
+      if (self->install_modules)
+        g_string_append_printf (txn_title, "; module install: %u",
+                                g_strv_length (self->install_modules));
 
       rpmostree_transaction_set_title (RPMOSTREE_TRANSACTION (transaction), txn_title->str);
     }
@@ -1121,11 +1141,30 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
       if (!rpmostree_origin_remove_all_packages (origin, &remove_changed, error))
         return FALSE;
     }
-  else if (self->uninstall_pkgs)
+  else
     {
-      if (!rpmostree_origin_remove_packages (origin, self->uninstall_pkgs,
-                                             idempotent_layering, &remove_changed, error))
-        return FALSE;
+      gboolean local_changed = FALSE;
+      if (self->uninstall_pkgs)
+        {
+          if (!rpmostree_origin_remove_packages (origin, self->uninstall_pkgs,
+                                                 idempotent_layering, &local_changed, error))
+            return FALSE;
+        }
+      remove_changed = remove_changed || local_changed;
+      if (self->disable_modules)
+        {
+          if (!rpmostree_origin_remove_modules (origin, self->disable_modules,
+                                                TRUE, &local_changed, error))
+            return FALSE;
+        }
+      remove_changed = remove_changed || local_changed;
+      if (self->uninstall_modules)
+        {
+          if (!rpmostree_origin_remove_modules (origin, self->uninstall_modules,
+                                                FALSE, &local_changed, error))
+            return FALSE;
+        }
+      remove_changed = remove_changed || local_changed;
     }
 
   /* In reality, there may not be any new layer required even if `remove_changed` is TRUE
@@ -1176,6 +1215,24 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
       changed = changed || add_changed;
     }
 
+  if (self->enable_modules)
+    {
+      gboolean add_changed = FALSE;
+      if (!rpmostree_origin_add_modules (origin, self->enable_modules, TRUE, &add_changed, error))
+        return FALSE;
+
+      changed = changed || add_changed;
+    }
+
+  if (self->install_modules)
+    {
+      gboolean add_changed = FALSE;
+      if (!rpmostree_origin_add_modules (origin, self->install_modules, FALSE, &add_changed, error))
+        return FALSE;
+
+      changed = changed || add_changed;
+    }
+
   if (self->install_local_pkgs != NULL)
     {
       g_autoptr(GPtrArray) pkgs = NULL;
@@ -1215,7 +1272,7 @@ deploy_transaction_execute (RpmostreedTransaction *transaction,
       g_autoptr(GVariant) removed = NULL;
       g_autoptr(GVariant) replaced = NULL;
       if (!rpmostree_deployment_get_layered_info (repo, merge_deployment, NULL, NULL, NULL,
-                                                  NULL, &removed, &replaced, error))
+                                                  NULL, NULL, &removed, &replaced, error))
         return FALSE;
 
       g_autoptr(GHashTable) nevra_to_name = g_hash_table_new (g_str_hash, g_str_equal);
@@ -1730,6 +1787,10 @@ rpmostreed_transaction_new_deploy (GDBusMethodInvocation *invocation,
   self->override_replace_pkgs = vardict_lookup_strv_canonical (self->modifiers, "override-replace-packages");
   self->override_remove_pkgs = vardict_lookup_strv_canonical (self->modifiers, "override-remove-packages");
   self->override_reset_pkgs = vardict_lookup_strv_canonical (self->modifiers, "override-reset-packages");
+  self->enable_modules = vardict_lookup_strv_canonical (self->modifiers, "enable-modules");
+  self->disable_modules = vardict_lookup_strv_canonical (self->modifiers, "disable-modules");
+  self->install_modules = vardict_lookup_strv_canonical (self->modifiers, "install-modules");
+  self->uninstall_modules = vardict_lookup_strv_canonical (self->modifiers, "uninstall-modules");
 
   /* default to allowing downgrades for rebases & deploys (without --disallow-downgrade) */
   if (vardict_lookup_bool (self->options, "allow-downgrade", refspec_or_revision))

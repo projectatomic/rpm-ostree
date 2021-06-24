@@ -838,6 +838,12 @@ impl_install_tree (RpmOstreeTreeComposeContext *self,
         return glnx_throw_errno_prefix (error, "fchdir");
     }
 
+  /* We don't support installing modules in non-unified mode, because it relies
+   * on the core writing metadata to the commit metadata (obviously this could
+   * be supported, but meh...) */
+  if (!opt_unified_core && json_object_has_member (self->treefile, "modules"))
+    return glnx_throw (error, "Composing with modules requires --unified-core");
+
   /* Read the previous commit. Note we don't actually *need* the full commit; really, only
    * if one uses `check-passwd: { "type": "previous" }`. There are a few other optimizations
    * too, e.g. using the previous SELinux policy in unified core. Also, we might need the

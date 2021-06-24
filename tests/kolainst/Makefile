@@ -18,4 +18,5 @@ install: all
 	rsync -prlv rpm-repos/ $(KOLA_TESTDIR)/destructive/data/rpm-repos/
 
 localinstall: all
+	rm -rf ../kola
 	make install KOLA_TESTDIR=../kola

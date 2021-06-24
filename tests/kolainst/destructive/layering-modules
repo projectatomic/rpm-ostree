@@ -1,0 +1,59 @@
+#!/bin/bash
+set -euo pipefail
+
+. ${KOLA_EXT_DATA}/libtest.sh
+cd $(mktemp -d)
+
+set -x
+
+rm -rf /etc/yum.repos.d/*
+cat > /etc/yum.repos.d/vmcheck.repo << EOF
+[test-repo]
+name=test-repo
+baseurl=file:///${KOLA_EXT_DATA}/rpm-repos/0
+gpgcheck=0
+EOF
+
+if rpm-ostree install foomodular 2>err.txt; then
+  assert_not_reached "successfully installed a modular pkg?"
+fi
+assert_file_has_content_literal err.txt "Packages not found: foomodular"
+echo "ok can't install modular pkg by default"
+
+if rpm-ostree module install foomodular 2>err.txt; then
+  assert_not_reached "successfully installed a module with multiple streams without a default stream"
+fi
+assert_file_has_content err.txt "Cannot enable more streams .* at the same time"
+echo "ok can't install module with multiple streams"
+
+if rpm-ostree module enable foomodular 2>err.txt; then
+  assert_not_reached "successfully enabled a module with multiple streams without a default stream"
+fi
+assert_file_has_content err.txt "Cannot enable more streams .* at the same time"
+echo "ok can't enable module with multiple streams"
+
+rpm-ostree module enable foomodular:no-profile
+rpm-ostree install foomodular
+rpm-ostree status > output.txt
+assert_file_has_content_literal output.txt "EnabledModules: foomodular:no-profile"
+assert_file_has_content_literal output.txt "LayeredPackages: foomodular"
+rpm-ostree cleanup -p
+echo "ok enable module"
+
+if rpm-ostree module install foomodular:no-default-profile 2>err.txt; then
+  assert_not_reached "successfully installed a module without default profile?"
+fi
+assert_file_has_content_literal err.txt "No default profile found"
+echo "ok can't install module without default profile"
+
+rpm-ostree module install foomodular:no-default-profile/myprof
+rpm-ostree status > output.txt
+assert_file_has_content_literal output.txt "LayeredModules: foomodular:no-default-profile/myprof"
+rpm-ostree cleanup -p
+echo "ok install module without default profile"
+
+rpm-ostree module install foomodular:with-default-profile
+rpm-ostree status > output.txt
+assert_file_has_content_literal output.txt "LayeredModules: foomodular:with-default-profile"
+rpm-ostree cleanup -p
+echo "ok install module with default profile"
