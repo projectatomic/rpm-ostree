@@ -3,6 +3,7 @@ WORKDIR /src
 COPY . .
 RUN ./ci/build.sh && make install DESTDIR=/cosa/component-install
 RUN make -C tests/kolainst install DESTDIR=/cosa/component-tests
+RUN cp -a tests /cosa/component-source-tests
 # Uncomment this to fake a build to test the code below
 # RUN mkdir -p /cosa/component-install/usr/bin && echo foo > /cosa/component-install/usr/bin/foo
 
