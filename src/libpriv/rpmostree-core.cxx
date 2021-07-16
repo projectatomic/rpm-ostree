@@ -875,6 +875,9 @@ rpmostree_context_download_metadata (RpmOstreeContext *self,
   /* https://github.com/rpm-software-management/libdnf/pull/416
    * https://github.com/projectatomic/rpm-ostree/issues/1127
    */
+  // In composes, don't load the host (container) rpmdb
+  if (!self->is_system)
+    flags = static_cast<DnfContextSetupSackFlags>(static_cast<int>(flags) | DNF_CONTEXT_SETUP_SACK_FLAG_SKIP_RPMDB);
   if (flags & DNF_CONTEXT_SETUP_SACK_FLAG_SKIP_FILELISTS)
     dnf_context_set_enable_filelists (self->dnfctx, FALSE);
 
