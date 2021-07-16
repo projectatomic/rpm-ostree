@@ -124,7 +124,6 @@ pub mod ffi {
     // cliwrap.rs
     extern "Rust" {
         fn cliwrap_write_wrappers(rootfs: i32) -> Result<()>;
-        fn cliwrap_entrypoint(argv: Vec<String>) -> Result<()>;
         fn cliwrap_destdir() -> String;
     }
 
@@ -587,7 +586,7 @@ mod bwrap;
 pub(crate) use bwrap::*;
 mod client;
 pub(crate) use client::*;
-mod cliwrap;
+pub mod cliwrap;
 pub mod container;
 pub use cliwrap::*;
 mod composepost;

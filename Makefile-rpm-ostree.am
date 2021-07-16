@@ -29,7 +29,6 @@ librpmostreeinternals_la_SOURCES = \
 	src/app/rpmostree-builtin-rebase.cxx \
 	src/app/rpmostree-builtin-cancel.cxx \
 	src/app/rpmostree-builtin-cleanup.cxx \
-	src/app/rpmostree-builtin-cliwrap.cxx \
 	src/app/rpmostree-builtin-initramfs.cxx \
 	src/app/rpmostree-builtin-initramfs-etc.cxx \
 	src/app/rpmostree-builtin-applylive.cxx \

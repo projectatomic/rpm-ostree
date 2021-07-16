@@ -18,6 +18,7 @@ fn inner_main() -> Result<()> {
     match args.get(1).copied() {
         // Add custom Rust commands here, and also in `libmain.cxx` if user-visible.
         Some("countme") => rpmostree_rust::countme::entrypoint(&args),
+        Some("cliwrap") => rpmostree_rust::cliwrap::entrypoint(&args),
         Some("ex-container") => rpmostree_rust::container::entrypoint(&args),
         _ => {
             // Otherwise fall through to C++ main().

@@ -34,10 +34,12 @@ pub(crate) enum RunDisposition {
 }
 
 /// Main entrypoint for cliwrap
-pub(crate) fn cliwrap_entrypoint(args: Vec<String>) -> CxxResult<()> {
+pub fn entrypoint(args: &[&str]) -> Result<()> {
+    // Skip the initial bits
+    let args = &args[2..];
     // We'll panic here if the vector is empty, but that is intentional;
     // the outer code should always pass us at least one arg.
-    let name = args[0].as_str();
+    let name = args[0];
     let name = match std::path::Path::new(name).file_name() {
         Some(name) => name,
         None => return Err(anyhow!("Invalid wrapped binary: {}", name).into()),
@@ -45,7 +47,8 @@ pub(crate) fn cliwrap_entrypoint(args: Vec<String>) -> CxxResult<()> {
     // We know we had a string from above
     let name = name.to_str().unwrap();
 
-    let args: Vec<&str> = args.iter().skip(1).map(|v| v.as_str()).collect();
+    // And now these are the args for the command
+    let args = &args[1..];
 
     // If we're not booted into ostree, just run the child directly.
     if !cliutil::is_ostree_booted() {
