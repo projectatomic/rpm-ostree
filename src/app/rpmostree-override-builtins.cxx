@@ -34,6 +34,7 @@ static const char *const *opt_replace_pkgs;
 static const char *const *install_pkgs;
 static const char *const *uninstall_pkgs;
 static gboolean opt_lock_finalization;
+static gboolean opt_ex_pin_from_repos;
 
 static GOptionEntry option_entries[] = {
   { "os", 0, 0, G_OPTION_ARG_STRING, &opt_osname, "Operate on provided OSNAME", "OSNAME" },
@@ -50,6 +51,7 @@ static GOptionEntry reset_option_entries[] = {
 
 static GOptionEntry replace_option_entries[] = {
   { "remove", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_remove_pkgs, "Remove a package", "PKG" },
+  { "ex-pin-from-repos", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &opt_ex_pin_from_repos, "Allow fetching from repos", NULL},
   { NULL }
 };
 
@@ -68,8 +70,10 @@ handle_override (RPMOSTreeSysroot  *sysroot_proxy,
                  GError           **error)
 {
   glnx_unref_object RPMOSTreeOS *os_proxy = NULL;
-  if (!rpmostree_load_os_proxy (sysroot_proxy, opt_osname,
-                                cancellable, &os_proxy, error))
+  RPMOSTreeOSExperimental *osexperimental_proxy = NULL;
+
+  if(!rpmostree_load_os_proxies(sysroot_proxy, opt_osname, cancellable,
+                                &os_proxy, &osexperimental_proxy, error))
     return FALSE;
 
   /* Perform uninstalls offline; users don't expect the "auto-update" behaviour here. But
@@ -89,7 +93,63 @@ handle_override (RPMOSTreeSysroot  *sysroot_proxy,
   g_autoptr(GVariant) options = g_variant_ref_sink (g_variant_dict_end (&dict));
 
   g_autoptr(GVariant) previous_deployment = rpmostree_os_dup_default_deployment (os_proxy);
+  g_autoptr(GPtrArray) override_replace_final = g_ptr_array_new();
+  GUnixFDList fds;
+  g_autoptr(GUnixFDList) list_fds;
 
+  if (override_replace && opt_ex_pin_from_repos)
+    {
+      g_autoptr(GPtrArray) queries = g_ptr_array_new();
+
+      for (const char *const* it = override_replace; it && *it; it++)
+        {
+          auto pkg = *it;
+
+          if(rpmostreecxx::is_http_arg(pkg) || rpmostreecxx::is_rpm_arg(pkg))
+            {
+              g_ptr_array_add(override_replace_final, (gpointer)pkg);
+              continue;
+	    }
+          else
+            {
+              g_ptr_array_add(queries, (gpointer)pkg);
+            }
+        }
+      if (queries->len > 0)
+        {
+          g_ptr_array_add(queries, NULL);
+          g_autofree char *refresh_transaction_address = NULL;
+
+          if (!rpmostree_os_call_refresh_md_sync(os_proxy, options, &refresh_transaction_address,
+                                                 cancellable, error))
+            return FALSE;
+          if (!rpmostree_transaction_get_response_sync(sysroot_proxy, (const char*)refresh_transaction_address,
+                                                       cancellable, error))
+            return FALSE;
+          g_autoptr(GVariant) fd_idxs = NULL;
+          if (!rpmostree_osexperimental_call_download_packages_sync (osexperimental_proxy,
+                                                                     (const char *const*) queries->pdata,
+                                                                     &fds, &fd_idxs, &list_fds,
+                                                                     cancellable, error))
+            return FALSE;
+
+          const int nfds = g_unix_fd_list_get_length (list_fds);
+          const guint n = g_variant_n_children (fd_idxs);
+          gint *new_fds = g_new0 (gint, n+1);
+
+          for (guint i = 0; i < n; i++)
+            {
+              g_autoptr(GVariant) hv = g_variant_get_child_value (fd_idxs, i);
+              g_assert (hv);
+              gint32 h = g_variant_get_handle (hv);
+              g_assert (0 <= h && h < nfds);
+              new_fds[i] = fds[h];
+            }
+
+          new_fds[n] = -1;
+          override_replace = (const char *const*) new_fds;
+        }
+    }
   g_autofree char *transaction_address = NULL;
   if (!rpmostree_update_deployment (os_proxy,
                                     NULL, /* set-refspec */
