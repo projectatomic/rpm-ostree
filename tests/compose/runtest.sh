@@ -5,14 +5,16 @@ if [ -n "${V:-}" ]; then
   set -x
 fi
 
-outputdir=$1; shift
+baseoutputdir=$1; shift
 fixtures=$1; shift
 testname=$1; shift
 
 # this is used directly just by the basic test, but it also hosts the RPMs
 export fixtures
 
-outputdir="${outputdir}/${testname}"
+successdir="${baseoutputdir}/success"
+
+outputdir="${baseoutputdir}/running/${testname}"
 rm -rf "${outputdir:?}"/*
 mkdir -p "${outputdir}"
 
@@ -44,6 +46,8 @@ git clone file://${fixtures}/config
 ostree init --repo repo --mode=bare-user
 
 if "${topsrcdir}/tests/compose/test-${testname}.sh"; then
+  mkdir -p ${successdir} >&3
+  mv ${outputdir} ${successdir}/${testname} >&3
   echo "PASS: ${testname}" >&3
 else
   echo "FAIL: ${testname}" >&3
