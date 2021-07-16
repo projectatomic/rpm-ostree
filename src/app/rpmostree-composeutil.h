@@ -59,7 +59,7 @@ rpmostree_composeutil_write_composejson (OstreeRepo  *repo,
                                          const OstreeRepoTransactionStats *stats,
                                          const char *new_revision,
                                          GVariant   *new_commit,
-                                         GVariantBuilder *builder,
+                                         const char *new_ref,
                                          GCancellable *cancellable,
                                          GError    **error);
 

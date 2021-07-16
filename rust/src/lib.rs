@@ -119,6 +119,7 @@ pub mod ffi {
     // builtins/compose/
     extern "Rust" {
         fn write_commit_id(target_path: &str, revision: &str) -> Result<()>;
+        fn print_ostree_txn_stats(stats: Pin<&mut OstreeRepoTransactionStats>);
     }
 
     // cliwrap.rs

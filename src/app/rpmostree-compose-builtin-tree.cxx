@@ -1036,9 +1036,6 @@ impl_commit_tree (RpmOstreeTreeComposeContext *self,
                   GCancellable    *cancellable,
                   GError         **error)
 {
-  g_auto(GVariantBuilder) composemeta_builder;
-  g_variant_builder_init (&composemeta_builder, G_VARIANT_TYPE ("a{sv}"));
-
   const char *gpgkey = NULL;
   if (!_rpmostree_jsonutil_object_get_optional_string_member (self->treefile, "gpg-key", &gpgkey, error))
     return FALSE;
@@ -1119,6 +1116,7 @@ impl_commit_tree (RpmOstreeTreeComposeContext *self,
       if (!ostree_repo_commit_transaction (self->build_repo, &stats, cancellable, error))
         return glnx_prefix_error (error, "Commit");
       statsp = &stats;
+      rpmostreecxx::print_ostree_txn_stats (stats);
     }
 
   if (!opt_unified_core)
@@ -1138,23 +1136,25 @@ impl_commit_tree (RpmOstreeTreeComposeContext *self,
     return FALSE;
 
   /* --write-commitid-to overrides writing the ref */
+  const char *new_ref = NULL;
   if (self->ref && !opt_write_commitid_to)
     {
+      new_ref = self->ref;
       if (!ostree_repo_set_ref_immediate (self->repo, NULL, self->ref, new_revision,
                                           cancellable, error))
         return FALSE;
       g_print ("%s => %s\n", self->ref, new_revision);
-      g_variant_builder_add (&composemeta_builder, "{sv}", "ref", g_variant_new_string (self->ref));
     }
   else
     g_print ("Wrote commit: %s\n", new_revision);
 
-  if (!rpmostree_composeutil_write_composejson (self->repo,
-                                                opt_write_composejson_to, statsp,
-                                                new_revision, new_commit,
-                                                &composemeta_builder,
-                                                cancellable, error))
-    return FALSE;
+  /* Optionally write a JSON summary of this compose-commit run */
+  if (opt_write_commitid_to)
+    if (!rpmostree_composeutil_write_composejson (self->repo,
+                                                  opt_write_composejson_to, statsp,
+                                                  new_revision, new_commit, new_ref,
+                                                  cancellable, error))
+     return FALSE;
 
   if (opt_write_commitid_to)
     rpmostreecxx::write_commit_id(opt_write_commitid_to, new_revision);

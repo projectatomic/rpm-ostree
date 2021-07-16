@@ -197,59 +197,59 @@ rpmostree_composeutil_write_composejson (OstreeRepo  *repo,
                                          const OstreeRepoTransactionStats *stats,
                                          const char *new_revision,
                                          GVariant   *new_commit,
-                                         GVariantBuilder *builder,
+                                         const char *new_ref,
                                          GCancellable *cancellable,
                                          GError    **error)
 {
   g_autoptr(GVariant) new_commit_inline_meta = g_variant_get_child_value (new_commit, 0);
 
+  g_auto(GVariantBuilder) builder;
+  g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+
+  if (new_ref != NULL)
+    g_variant_builder_add (&builder, "{sv}", "ref", g_variant_new_string (new_ref));
+
+  /* Lift transaction statistics into compose properties, if any */
   if (stats)
     {
-      g_variant_builder_add (builder, "{sv}", "ostree-n-metadata-total",
+      g_variant_builder_add (&builder, "{sv}", "ostree-n-metadata-total",
                              g_variant_new_uint32 (stats->metadata_objects_total));
-      g_print ("Metadata Total: %u\n", stats->metadata_objects_total);
-
-      g_variant_builder_add (builder, "{sv}", "ostree-n-metadata-written",
+      g_variant_builder_add (&builder, "{sv}", "ostree-n-metadata-written",
                              g_variant_new_uint32 (stats->metadata_objects_written));
-      g_print ("Metadata Written: %u\n", stats->metadata_objects_written);
-
-      g_variant_builder_add (builder, "{sv}", "ostree-n-content-total",
+      g_variant_builder_add (&builder, "{sv}", "ostree-n-content-total",
                              g_variant_new_uint32 (stats->content_objects_total));
-      g_print ("Content Total: %u\n", stats->content_objects_total);
-
-      g_print ("Content Written: %u\n", stats->content_objects_written);
-      g_variant_builder_add (builder, "{sv}", "ostree-n-content-written",
+      g_variant_builder_add (&builder, "{sv}", "ostree-n-content-written",
                              g_variant_new_uint32 (stats->content_objects_written));
-
-      g_print ("Content Cache Hits: %u\n", stats->devino_cache_hits);
-      g_variant_builder_add (builder, "{sv}", "ostree-n-cache-hits",
+      g_variant_builder_add (&builder, "{sv}", "ostree-n-cache-hits",
                              g_variant_new_uint32 (stats->devino_cache_hits));
-
-      g_print ("Content Bytes Written: %" G_GUINT64_FORMAT "\n", stats->content_bytes_written);
-      g_variant_builder_add (builder, "{sv}", "ostree-content-bytes-written",
+      g_variant_builder_add (&builder, "{sv}", "ostree-content-bytes-written",
                              g_variant_new_uint64 (stats->content_bytes_written));
     }
-  g_variant_builder_add (builder, "{sv}", "ostree-commit", g_variant_new_string (new_revision));
+
+  g_variant_builder_add (&builder, "{sv}", "ostree-commit", g_variant_new_string (new_revision));
+
   g_autofree char *content_checksum = ostree_commit_get_content_checksum (new_commit);
-  g_variant_builder_add (builder, "{sv}", "ostree-content-checksum", g_variant_new_string (content_checksum));
+  g_variant_builder_add (&builder, "{sv}", "ostree-content-checksum", g_variant_new_string (content_checksum));
+
   const char *commit_version = NULL;
   (void)g_variant_lookup (new_commit_inline_meta, OSTREE_COMMIT_META_KEY_VERSION, "&s", &commit_version);
   if (commit_version)
-    g_variant_builder_add (builder, "{sv}", "ostree-version", g_variant_new_string (commit_version));
+    g_variant_builder_add (&builder, "{sv}", "ostree-version", g_variant_new_string (commit_version));
+
   /* Since JavaScript doesn't have 64 bit integers and hence neither does JSON,
    * store this as a string:
    * https://stackoverflow.com/questions/10286204/the-right-json-date-format
    * */
   { guint64 commit_ts = ostree_commit_get_timestamp (new_commit);
     g_autofree char *commit_ts_iso_8601 = rpmostree_timestamp_str_from_unix_utc (commit_ts);
-    g_variant_builder_add (builder, "{sv}", "ostree-timestamp", g_variant_new_string (commit_ts_iso_8601));
+    g_variant_builder_add (&builder, "{sv}", "ostree-timestamp", g_variant_new_string (commit_ts_iso_8601));
   }
 
   const char *inputhash = NULL;
   (void)g_variant_lookup (new_commit_inline_meta, "rpmostree.inputhash", "&s", &inputhash);
   /* We may not have the inputhash in the split-up installroot case */
   if (inputhash)
-    g_variant_builder_add (builder, "{sv}", "rpm-ostree-inputhash", g_variant_new_string (inputhash));
+    g_variant_builder_add (&builder, "{sv}", "rpm-ostree-inputhash", g_variant_new_string (inputhash));
 
   g_autofree char *parent_revision = ostree_commit_get_parent (new_commit);
   if (path && parent_revision)
@@ -266,13 +266,13 @@ rpmostree_composeutil_write_composejson (OstreeRepo  *repo,
           if (!rpm_ostree_db_diff_variant (repo, parent_revision, new_revision,
                                            TRUE, &diffv, cancellable, error))
             return FALSE;
-          g_variant_builder_add (builder, "{sv}", "pkgdiff", diffv);
+          g_variant_builder_add (&builder, "{sv}", "pkgdiff", diffv);
         }
     }
 
   if (path)
     {
-      g_autoptr(GVariant) composemeta_v = g_variant_builder_end (builder);
+      g_autoptr(GVariant) composemeta_v = g_variant_builder_end (&builder);
       JsonNode *composemeta_node = json_gvariant_serialize (composemeta_v);
       glnx_unref_object JsonGenerator *generator = json_generator_new ();
       json_generator_set_root (generator, composemeta_node);
